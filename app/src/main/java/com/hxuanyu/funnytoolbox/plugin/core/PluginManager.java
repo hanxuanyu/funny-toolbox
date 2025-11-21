@@ -409,7 +409,8 @@ public class PluginManager {
         MenuRegistry.MenuItem item = new MenuRegistry.MenuItem();
         item.setPluginId(descriptor.getId());
         item.setLabel(descriptor.getName());
-        item.setIcon(descriptor.getIcon() != null ? descriptor.getIcon() : "🔧");
+        String iconStr = descriptor.resolveIconString();
+        item.setIcon((iconStr != null && !iconStr.isEmpty()) ? iconStr : "🔧");
         item.setRoute("/plugin/" + descriptor.getId());
         item.setOrder(0);
 
@@ -493,7 +494,8 @@ public class PluginManager {
         dto.setVersion(desc.getVersion());
         dto.setDescription(desc.getDescription());
         dto.setAuthor(desc.getAuthor());
-        dto.setIcon(desc.getIcon());
+        String dtoIcon = desc.resolveIconString();
+        dto.setIcon((dtoIcon != null && !dtoIcon.isEmpty()) ? dtoIcon : "🔧");
         dto.setStatus(context.getStatus().name());
         dto.setLoadTime(context.getLoadTime());
         dto.setStartTime(context.getStartTime());
