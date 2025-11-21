@@ -21,6 +21,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.io.File;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.io.IOException;
 import java.net.URL;
 import java.nio.file.Files;
@@ -94,7 +95,13 @@ public class PluginManager {
 
                 // 自动启用
                 PluginDescriptor descriptor = readDescriptor(jarFile);
-                enablePlugin(descriptor.getId());
+                String pluginId = descriptor.getId();
+                boolean shouldEnable = readPersistedEnabledOrDefaultTrue(pluginId);
+                if (shouldEnable) {
+                    enablePlugin(pluginId);
+                } else {
+                    log.info("Plugin {} is marked as disabled (persisted). Skip auto enable.", pluginId);
+                }
 
             } catch (Exception e) {
                 log.error("Failed to load plugin: {}", jarFile.getName(), e);
@@ -141,6 +148,13 @@ public class PluginManager {
         pluginAppContext.setClassLoader(classLoader);
         pluginAppContext.setParent(platformContext);
 
+        // 4.1 先创建平台上下文并注册为插件 Spring 上下文中的 Bean，方便插件中自动注入使用
+        PlatformContextImpl platformCtx = new PlatformContextImpl(context);
+        // 使用 registerBean 将实例注入为可按类型注入的 Bean
+        pluginAppContext.registerBean(com.hxuanyu.toolbox.plugin.api.PlatformContext.class, () -> platformCtx);
+        // 也注册实现类，便于需要时按实现类注入
+        pluginAppContext.registerBean(PlatformContextImpl.class, () -> platformCtx);
+
         // 5. 扫描插件包
         String basePackage = getBasePackage(descriptor.getMainClass());
         if (StringUtils.hasText(basePackage)) {
@@ -155,8 +169,7 @@ public class PluginManager {
         IPlugin pluginInstance = (IPlugin) mainClass.getDeclaredConstructor().newInstance();
         context.setPluginInstance(pluginInstance);
 
-        // 7. 调用插件 onLoad
-        PlatformContextImpl platformCtx = new PlatformContextImpl(context);
+        // 7. 调用插件 onLoad（复用已注册的上下文实例）
         try {
             pluginInstance.onLoad(platformCtx);
         } catch (Exception e) {
@@ -200,6 +213,9 @@ public class PluginManager {
             context.setStatus(PluginStatus.ENABLED);
             context.setStartTime(LocalDateTime.now());
 
+            // 6. 持久化状态
+            savePluginEnabled(pluginId, true);
+
             log.info("✅ Plugin enabled: {}", pluginId);
 
         } catch (Exception e) {
@@ -237,6 +253,9 @@ public class PluginManager {
 
             // 5. 更新状态
             context.setStatus(PluginStatus.DISABLED);
+
+            // 6. 持久化状态
+            savePluginEnabled(pluginId, false);
 
             log.info("✅ Plugin disabled: {}", pluginId);
 
@@ -640,6 +659,52 @@ public class PluginManager {
         }
 
         return cacheDir.toAbsolutePath().toString();
+    }
+
+    // ===================== 插件状态持久化 =====================
+
+    /**
+     * 读取持久化的插件启用状态；当没有记录时，默认返回 true（即默认启用）。
+     */
+    private boolean readPersistedEnabledOrDefaultTrue(String pluginId) {
+        try {
+            Path stateFile = getPluginStateFile(pluginId);
+            if (!Files.exists(stateFile)) {
+                return true; // 无记录则默认启用
+            }
+            Properties props = new Properties();
+            try (InputStream is = Files.newInputStream(stateFile)) {
+                props.load(is);
+            }
+            String v = props.getProperty("enabled");
+            if (v == null) return true;
+            return Boolean.parseBoolean(v.trim());
+        } catch (Exception ex) {
+            log.warn("Failed to read persisted state for plugin {}: {}. Use default: enabled.", pluginId, ex.getMessage());
+            return true;
+        }
+    }
+
+    /**
+     * 持久化保存插件启用状态。
+     */
+    private void savePluginEnabled(String pluginId, boolean enabled) {
+        try {
+            Path stateFile = getPluginStateFile(pluginId);
+            Files.createDirectories(stateFile.getParent());
+            Properties props = new Properties();
+            props.setProperty("enabled", Boolean.toString(enabled));
+            try (OutputStream os = Files.newOutputStream(stateFile, java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.TRUNCATE_EXISTING)) {
+                props.store(os, "Plugin state for " + pluginId);
+            }
+            log.debug("Persisted plugin state: {} -> enabled={}", pluginId, enabled);
+        } catch (Exception ex) {
+            log.warn("Failed to persist state for plugin {}: {}", pluginId, ex.getMessage());
+        }
+    }
+
+    private Path getPluginStateFile(String pluginId) {
+        return Paths.get("config", "plugins", pluginId, "plugin-state.properties");
     }
 
     /**

@@ -2,6 +2,8 @@ package com.hxuanyu.funnytoolbox.plugin.core;
 
 import com.hxuanyu.toolbox.plugin.api.PlatformContext;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -19,11 +21,14 @@ public class PlatformContextImpl implements PlatformContext {
     private final PluginContext pluginContext;
     private final Properties config;
     private final Path configFile;
+    private final Logger logger;
 
     public PlatformContextImpl(PluginContext pluginContext) {
         this.pluginContext = pluginContext;
         this.config = new Properties();
         this.configFile = pluginContext.getConfigDirectory().resolve("config.properties");
+        // 为当前插件创建独立的 Logger，便于插件内直接注入与使用
+        this.logger = LoggerFactory.getLogger("plugin." + pluginContext.getPluginId());
 
         // 加载配置
         loadConfig();
@@ -68,12 +73,17 @@ public class PlatformContextImpl implements PlatformContext {
 
     @Override
     public void log(String message) {
-        log.info("[Plugin:{}] {}", getPluginId(), message);
+        logger.info("[Plugin:{}] {}", getPluginId(), message);
     }
 
     @Override
     public void error(String message, Throwable throwable) {
-        log.error("[Plugin:{}] {}", getPluginId(), message, throwable);
+        logger.error("[Plugin:{}] {}", getPluginId(), message, throwable);
+    }
+
+    @Override
+    public Logger getLogger() {
+        return logger;
     }
 
     private void loadConfig() {

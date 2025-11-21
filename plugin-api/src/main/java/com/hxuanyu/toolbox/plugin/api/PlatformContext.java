@@ -1,5 +1,6 @@
 package com.hxuanyu.toolbox.plugin.api;
 
+import org.slf4j.Logger;
 import java.nio.file.Path;
 import java.util.Properties;
 
@@ -54,4 +55,10 @@ public interface PlatformContext {
      * 记录错误
      */
     void error(String message, Throwable throwable);
+
+    /**
+     * 获取 SLF4J 日志对象，插件可直接使用该 Logger 进行日志打印。
+     * 注意：该 Logger 由平台创建并绑定到平台的日志实现，确保日志统一输出。
+     */
+    Logger getLogger();
 }
