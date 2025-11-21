@@ -92,7 +92,6 @@ public class PlatformController {
                 return Result.error("文件不能为空");
             }
 
-
             String fileName = file.getOriginalFilename();
             // 规范化文件名，避免路径穿越及容器附带路径的情况
             if (fileName != null) {
@@ -102,30 +101,85 @@ public class PlatformController {
                 return Result.error("只能上传 JAR 文件");
             }
 
-            // 2. 保存文件
+            // 2. 目录与目标路径
             Path pluginDirectory = Paths.get(pluginDir);
             Files.createDirectories(pluginDirectory);
-
             Path targetPath = pluginDirectory.resolve(fileName).normalize();
             if (!targetPath.startsWith(pluginDirectory)) {
                 return Result.error("非法文件名");
             }
 
-            // 使用流复制而不是 transferTo，避免某些容器将源文件保留在临时目录或跨分区 rename 失败的问题
+            // 3. 先将上传内容保存到临时文件，再解析插件ID
+            Path tempFile = Files.createTempFile("plugin-upload-", ".jar");
             try (java.io.InputStream in = file.getInputStream()) {
-                Files.copy(in, targetPath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                Files.copy(in, tempFile, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
             }
 
+            String newPluginId = pluginManager.resolvePluginIdFromJar(tempFile.toFile());
+
+            // 4. 冲突处理：若存在同名文件或同 ID 的插件，先卸载旧版本并删除旧 JAR
+            // 4.1 同名文件
+            if (Files.exists(targetPath)) {
+                try {
+                    // 尝试解析同名 JAR 的插件ID并卸载
+                    String existedId = pluginManager.resolvePluginIdFromJar(targetPath.toFile());
+                    try {
+                        pluginManager.unloadPlugin(existedId);
+                    } catch (Exception unloadEx) {
+                        log.warn("Unload old plugin by file name failed or not loaded: {} -> {}", existedId, unloadEx.getMessage());
+                    }
+                } catch (Exception ignore) {
+                    // 解析失败也不影响删除文件
+                }
+                try {
+                    Files.deleteIfExists(targetPath);
+                    log.info("Deleted existing plugin file with same name: {}", targetPath);
+                } catch (Exception delEx) {
+                    // Windows 下可能因占用删除失败，尝试强删
+                    FileUtils.forceDelete(targetPath.toFile());
+                }
+            }
+
+            // 4.2 同插件ID（可能文件名不同）
+            try {
+                String existedJarPath = pluginManager.tryFindPluginJar(newPluginId);
+                if (existedJarPath != null) {
+                    try {
+                        pluginManager.unloadPlugin(newPluginId);
+                    } catch (Exception unloadEx) {
+                        log.warn("Unload old plugin by ID failed or not loaded: {} -> {}", newPluginId, unloadEx.getMessage());
+                    }
+                    // 如果旧 JAR 与目标路径不同，也需要删除
+                    File existedJar = new File(existedJarPath);
+                    if (!existedJar.toPath().equals(targetPath)) {
+                        try {
+                            Files.deleteIfExists(existedJar.toPath());
+                        } catch (Exception delEx) {
+                            FileUtils.forceDelete(existedJar);
+                        }
+                        log.info("Deleted existing plugin JAR of same ID ({}): {}", newPluginId, existedJarPath);
+                    }
+                }
+            } catch (Exception findEx) {
+                // 忽略查找/删除中的异常，不阻断后续安装
+                log.warn("Failed during old plugin cleanup for {}: {}", newPluginId, findEx.getMessage());
+            }
+
+            // 5. 将临时文件复制为目标文件
+            Files.copy(tempFile, targetPath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
             log.info("Plugin file saved: {}", targetPath);
 
-            // 3. 加载插件
+            // 6. 加载并启用插件
             pluginManager.loadPlugin(targetPath.toFile());
+            pluginManager.enablePlugin(newPluginId);
 
-            // 4. 通过 JAR 内的描述符获取插件ID并自动启用（不再从文件名解析）
-            String pluginId = pluginManager.resolvePluginIdFromJar(targetPath.toFile());
-            pluginManager.enablePlugin(pluginId);
+            // 7. 清理临时文件
+            try {
+                Files.deleteIfExists(tempFile);
+            } catch (Exception ignore) {
+            }
 
-            return Result.success(pluginId, "插件安装成功");
+            return Result.success(newPluginId, "插件安装成功");
 
         } catch (Exception e) {
             log.error("Failed to install plugin", e);
