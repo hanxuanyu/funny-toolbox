@@ -70,8 +70,8 @@ public class PluginManager {
 
         File dir = new File(pluginDir);
         if (!dir.exists()) {
-            dir.mkdirs();
-            log.info("Created plugin directory: {}", dir.getAbsolutePath());
+            boolean result = dir.mkdirs();
+            log.info("Created plugin directory: {}, result: {}", dir.getAbsolutePath(), result);
             return;
         }
 

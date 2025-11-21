@@ -12,10 +12,33 @@ import org.springframework.context.annotation.Bean;
 public class FunnyToolboxApplication {
 
     public static void main(String[] args) {
-        SpringApplication.run(FunnyToolboxApplication.class, args);
+        var ctx = SpringApplication.run(FunnyToolboxApplication.class, args);
+        var env = ctx.getEnvironment();
+
+        String port = env.getProperty("server.port", "8080");
+        String contextPath = env.getProperty("server.servlet.context-path", "");
+        if (contextPath == null) {
+            contextPath = "";
+        }
+        // 规范化 context-path（确保以 / 开头且无尾部 /，根路径保持空串）
+        if (!contextPath.isEmpty()) {
+            if (!contextPath.startsWith("/")) {
+                contextPath = "/" + contextPath;
+            }
+            if (contextPath.endsWith("/")) {
+                contextPath = contextPath.substring(0, contextPath.length() - 1);
+            }
+        }
+
+        String baseUrl = "http://localhost:" + port + contextPath;
+
         log.info("===========================================");
         log.info("🎉 Toolbox Platform Started Successfully!");
-        log.info("🌐 Access: http://localhost:8080");
+        log.info("🌐 Access: {}", baseUrl);
+        // 文档地址提示
+        log.info("📘 OpenAPI JSON: {}/v3/api-docs", baseUrl);
+        log.info("🧭 Swagger UI  : {}/swagger-ui/index.html", baseUrl);
+        log.info("🔪 Knife4j UI  : {}/doc.html", baseUrl);
         log.info("===========================================");
     }
 
