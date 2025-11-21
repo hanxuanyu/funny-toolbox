@@ -64,20 +64,19 @@ public class RouteRegistry {
      */
     private RequestMappingInfo createMappingInfo(String apiPrefix, Method method) {
         // 检查各种映射注解
-        RequestMapping requestMapping = AnnotationUtils.findAnnotation(method, RequestMapping.class);
+        // 优先使用具体的 HTTP 方法注解，避免由于 @GetMapping 等通过元注解继承的 @RequestMapping 被提前匹配
         GetMapping getMapping = AnnotationUtils.findAnnotation(method, GetMapping.class);
         PostMapping postMapping = AnnotationUtils.findAnnotation(method, PostMapping.class);
         PutMapping putMapping = AnnotationUtils.findAnnotation(method, PutMapping.class);
         DeleteMapping deleteMapping = AnnotationUtils.findAnnotation(method, DeleteMapping.class);
         PatchMapping patchMapping = AnnotationUtils.findAnnotation(method, PatchMapping.class);
+        RequestMapping requestMapping = AnnotationUtils.findAnnotation(method, RequestMapping.class);
 
         String[] paths = null;
         RequestMethod[] methods = null;
 
-        if (requestMapping != null) {
-            paths = requestMapping.value().length > 0 ? requestMapping.value() : requestMapping.path();
-            methods = requestMapping.method();
-        } else if (getMapping != null) {
+        // 具体注解优先，最后再回退到 RequestMapping
+        if (getMapping != null) {
             paths = getMapping.value().length > 0 ? getMapping.value() : getMapping.path();
             methods = new RequestMethod[]{RequestMethod.GET};
         } else if (postMapping != null) {
@@ -92,6 +91,9 @@ public class RouteRegistry {
         } else if (patchMapping != null) {
             paths = patchMapping.value().length > 0 ? patchMapping.value() : patchMapping.path();
             methods = new RequestMethod[]{RequestMethod.PATCH};
+        } else if (requestMapping != null) {
+            paths = requestMapping.value().length > 0 ? requestMapping.value() : requestMapping.path();
+            methods = requestMapping.method();
         }
 
         if (paths == null || paths.length == 0) {
