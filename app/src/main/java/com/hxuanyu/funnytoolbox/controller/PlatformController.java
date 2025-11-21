@@ -20,6 +20,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.File;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -131,12 +132,12 @@ public class PlatformController {
                 } catch (Exception ignore) {
                     // 解析失败也不影响删除文件
                 }
-                try {
-                    Files.deleteIfExists(targetPath);
+
+                // 卸载后删除（带重试，避免短暂占用）
+                if (deleteWithRetry(targetPath.toFile(), 5, 300)) {
                     log.info("Deleted existing plugin file with same name: {}", targetPath);
-                } catch (Exception delEx) {
-                    // Windows 下可能因占用删除失败，尝试强删
-                    FileUtils.forceDelete(targetPath.toFile());
+                } else {
+                    return Result.error("删除已存在的同名插件文件失败，请稍后重试");
                 }
             }
 
@@ -152,12 +153,11 @@ public class PlatformController {
                     // 如果旧 JAR 与目标路径不同，也需要删除
                     File existedJar = new File(existedJarPath);
                     if (!existedJar.toPath().equals(targetPath)) {
-                        try {
-                            Files.deleteIfExists(existedJar.toPath());
-                        } catch (Exception delEx) {
-                            FileUtils.forceDelete(existedJar);
+                        if (deleteWithRetry(existedJar, 5, 300)) {
+                            log.info("Deleted existing plugin JAR of same ID ({}): {}", newPluginId, existedJarPath);
+                        } else {
+                            return Result.error("删除已有相同插件ID的旧版本失败，请稍后重试");
                         }
-                        log.info("Deleted existing plugin JAR of same ID ({}): {}", newPluginId, existedJarPath);
                     }
                 }
             } catch (Exception findEx) {
@@ -173,9 +173,9 @@ public class PlatformController {
             pluginManager.loadPlugin(targetPath.toFile());
             pluginManager.enablePlugin(newPluginId);
 
-            // 7. 清理临时文件
+            // 7. 清理临时文件（带重试）
             try {
-                Files.deleteIfExists(tempFile);
+                deleteWithRetry(tempFile.toFile(), 3, 200);
             } catch (Exception ignore) {
             }
 
@@ -247,8 +247,12 @@ public class PlatformController {
 
             // 3. 删除 JAR 文件
             if (jarPath != null) {
-                FileUtils.forceDelete(new File(jarPath));
-                log.info("Plugin JAR deleted: {}", jarPath);
+                File jarFile = new File(jarPath);
+                if (deleteWithRetry(jarFile, 6, 300)) {
+                    log.info("Plugin JAR deleted: {}", jarPath);
+                } else {
+                    return Result.error("删除插件文件失败，可能仍被占用，请稍后重试");
+                }
             }
 
             return Result.success(null, "插件已卸载");
@@ -257,6 +261,43 @@ public class PlatformController {
             log.error("Failed to uninstall plugin: {}", id, e);
             return Result.error("卸载失败: " + e.getMessage());
         }
+    }
+
+    /**
+     * 删除文件（带重试）。
+     * 在 Windows 上，JAR 文件可能在关闭类加载器后短时间仍被占用。
+     */
+    private boolean deleteWithRetry(File file, int attempts, long sleepMs) {
+        if (file == null) return true;
+        IOException lastEx = null;
+        for (int i = 0; i < attempts; i++) {
+            try {
+                if (!file.exists()) return true;
+                Files.deleteIfExists(file.toPath());
+                if (!file.exists()) return true;
+            } catch (IOException e) {
+                lastEx = e;
+            }
+            // 尝试强删
+            try {
+                if (file.exists()) {
+                    FileUtils.forceDelete(file);
+                }
+                if (!file.exists()) return true;
+            } catch (IOException e) {
+                lastEx = e;
+            }
+            try {
+                Thread.sleep(sleepMs);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        if (lastEx != null) {
+            log.warn("Failed to delete file after retries: {} -> {}", file.getAbsolutePath(), lastEx.getMessage());
+        }
+        return !file.exists();
     }
 
     /**

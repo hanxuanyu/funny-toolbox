@@ -33,6 +33,7 @@ import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import org.apache.commons.io.FileUtils;
 
 /**
  * 插件管理器
@@ -327,6 +328,54 @@ public class PluginManager {
     }
 
     /**
+     * 查询插件状态（可选返回）。
+     */
+    public Optional<PluginStatus> getPluginStatus(String pluginId) {
+        PluginContext ctx = pluginContexts.get(pluginId);
+        return Optional.ofNullable(ctx).map(PluginContext::getStatus);
+    }
+
+    /**
+     * 是否处于启用状态。
+     */
+    public boolean isPluginEnabled(String pluginId) {
+        return getPluginStatus(pluginId).orElse(null) == PluginStatus.ENABLED;
+    }
+
+    /**
+     * 根据请求路径解析隶属的插件ID（针对 API 路由）。
+     * 会根据每个已加载插件的 apiPrefix 进行前缀匹配。
+     * 仅在插件被加载（不论启用/禁用）情况下有效。
+     */
+    public Optional<String> resolvePluginIdByApiPath(String requestPath) {
+        if (requestPath == null) return Optional.empty();
+        String path = requestPath.trim();
+        // 规范化，确保以 "/" 开头
+        if (!path.startsWith("/")) {
+            path = "/" + path;
+        }
+
+        for (PluginContext ctx : pluginContexts.values()) {
+            PluginDescriptor descriptor = ctx.getDescriptor();
+            String apiPrefix = (descriptor.getApi() != null && descriptor.getApi().getPrefix() != null
+                    && !descriptor.getApi().getPrefix().isEmpty())
+                    ? descriptor.getApi().getPrefix()
+                    : "/api/" + descriptor.getId();
+
+            // 统一去掉尾部斜杠
+            if (apiPrefix.endsWith("/")) {
+                apiPrefix = apiPrefix.substring(0, apiPrefix.length() - 1);
+            }
+
+            // 匹配当前请求是否以该前缀开头（完整段匹配）
+            if (path.equals(apiPrefix) || path.startsWith(apiPrefix + "/")) {
+                return Optional.of(descriptor.getId());
+            }
+        }
+        return Optional.empty();
+    }
+
+    /**
      * 注册 API 路由
      */
     private void registerApiRoutes(PluginContext context) {
@@ -389,7 +438,17 @@ public class PluginManager {
         }
 
         String urlPath = "/plugins/" + descriptor.getId() + "/**";
-        String resourceLocation = "jar:file:" + findPluginJar(descriptor.getId()) + "!" + basePath + "/";
+
+        // 优化：将插件 JAR 内的静态资源解压到平台本地缓存目录，以避免通过 jar:file 协议直接访问导致的文件锁定
+        String resourceLocation;
+        try {
+            String extractedDir = extractPluginStaticToCache(descriptor.getId(), basePath);
+            resourceLocation = "file:" + ensureEndsWithSlash(extractedDir);
+        } catch (Exception ex) {
+            log.warn("Failed to extract static resources for plugin {}, fallback to jar access: {}",
+                    descriptor.getId(), ex.getMessage());
+            resourceLocation = "jar:file:" + findPluginJar(descriptor.getId()) + "!" + ensureStartsWithSlash(basePath) + "/";
+        }
 
         staticResourceRegistry.registerResources(descriptor.getId(), urlPath, resourceLocation);
         context.getRegisteredResourcePaths().add(urlPath);
@@ -403,6 +462,17 @@ public class PluginManager {
     private void unregisterStaticResources(PluginContext context) {
         staticResourceRegistry.unregisterResources(context.getPluginId());
         context.getRegisteredResourcePaths().clear();
+
+        // 同步清理本地缓存的静态资源目录（若存在）
+        try {
+            Path cacheDir = getStaticCacheDir(context.getPluginId());
+            if (Files.exists(cacheDir)) {
+                FileUtils.deleteDirectory(cacheDir.toFile());
+                log.info("Deleted static cache directory for plugin {}: {}", context.getPluginId(), cacheDir);
+            }
+        } catch (Exception ex) {
+            log.warn("Failed to delete static cache directory for plugin {}: {}", context.getPluginId(), ex.getMessage());
+        }
     }
 
     /**
@@ -496,6 +566,80 @@ public class PluginManager {
         } catch (IOException e) {
             throw new PluginException("Failed to search plugin JAR", e);
         }
+    }
+
+    // ===================== 静态资源提取与缓存 =====================
+
+    private Path getStaticCacheDir(String pluginId) {
+        return Paths.get("data/static-cache/" + pluginId);
+    }
+
+    private String ensureEndsWithSlash(String path) {
+        if (path == null || path.isEmpty()) return path;
+        return path.endsWith("/") || path.endsWith("\\") ? path : path + "/";
+    }
+
+    private String ensureStartsWithSlash(String path) {
+        if (path == null || path.isEmpty()) return "/";
+        return path.startsWith("/") ? path : "/" + path;
+    }
+
+    /**
+     * 将插件 JAR 中 basePath 下的静态资源解压至本地缓存目录，返回缓存目录绝对路径。
+     */
+    private String extractPluginStaticToCache(String pluginId, String basePath) throws IOException {
+        String jarPath = findPluginJar(pluginId);
+        String normBase = basePath == null ? "static" : basePath;
+        if (normBase.startsWith("/")) normBase = normBase.substring(1);
+        if (!normBase.endsWith("/")) normBase = normBase + "/";
+
+        Path cacheDir = getStaticCacheDir(pluginId);
+        Files.createDirectories(cacheDir);
+
+        // 先清空旧缓存目录，避免遗留脏文件
+        try {
+            if (Files.exists(cacheDir)) {
+                FileUtils.cleanDirectory(cacheDir.toFile());
+            }
+        } catch (IOException ignore) {
+            // 清空失败不影响后续覆盖写入
+        }
+
+        try (JarFile jar = new JarFile(jarPath)) {
+            Enumeration<JarEntry> entries = jar.entries();
+            while (entries.hasMoreElements()) {
+                JarEntry entry = entries.nextElement();
+                String name = entry.getName();
+                if (!name.startsWith(normBase)) {
+                    continue;
+                }
+                String relative = name.substring(normBase.length());
+                if (relative.isEmpty()) {
+                    continue;
+                }
+                // 基础的路径穿越防护
+                if (relative.contains("..") || relative.startsWith("/")) {
+                    continue;
+                }
+
+                Path outPath = cacheDir.resolve(relative).normalize();
+                if (!outPath.startsWith(cacheDir)) {
+                    // 防止逃逸
+                    continue;
+                }
+
+                if (entry.isDirectory()) {
+                    Files.createDirectories(outPath);
+                } else {
+                    Files.createDirectories(outPath.getParent());
+                    try (InputStream is = jar.getInputStream(entry)) {
+                        Files.copy(is, outPath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                    }
+                }
+            }
+        }
+
+        return cacheDir.toAbsolutePath().toString();
     }
 
     /**

@@ -17,9 +17,11 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.URL;
 import java.net.URLConnection;
+// no direct use of JarURLConnection static methods to keep compatibility across JDKs
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import jakarta.annotation.PostConstruct;
 
 /**
  * 静态资源注册器
@@ -82,6 +84,19 @@ public class StaticResourceRegistry implements WebMvcConfigurer {
                 .addResourceLocations("classpath:/")
                 .resourceChain(true)
                 .addResolver(new PluginResourceResolver());
+    }
+
+    /**
+     * 全局通过系统属性提示禁用 jar 缓存，降低 JarURLConnection 锁文件概率（不同 JDK 支持度不同，作为兜底）。
+     */
+    @PostConstruct
+    public void disableJarUrlCaching() {
+        try {
+            System.setProperty("sun.net.www.protocol.jar.disableCaching", "true");
+            log.info("Requested to disable JAR URL caching via system property");
+        } catch (Throwable t) {
+            log.warn("Failed to set system property to disable JAR caching: {}", t.getMessage());
+        }
     }
 
     private String normalizeBase(String base) {
