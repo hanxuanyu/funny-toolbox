@@ -92,7 +92,12 @@ public class PlatformController {
                 return Result.error("文件不能为空");
             }
 
+
             String fileName = file.getOriginalFilename();
+            // 规范化文件名，避免路径穿越及容器附带路径的情况
+            if (fileName != null) {
+                fileName = new File(fileName).getName();
+            }
             if (fileName == null || !fileName.endsWith(".jar")) {
                 return Result.error("只能上传 JAR 文件");
             }
@@ -101,16 +106,23 @@ public class PlatformController {
             Path pluginDirectory = Paths.get(pluginDir);
             Files.createDirectories(pluginDirectory);
 
-            Path targetPath = pluginDirectory.resolve(fileName);
-            file.transferTo(targetPath.toFile());
+            Path targetPath = pluginDirectory.resolve(fileName).normalize();
+            if (!targetPath.startsWith(pluginDirectory)) {
+                return Result.error("非法文件名");
+            }
+
+            // 使用流复制而不是 transferTo，避免某些容器将源文件保留在临时目录或跨分区 rename 失败的问题
+            try (java.io.InputStream in = file.getInputStream()) {
+                Files.copy(in, targetPath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
 
             log.info("Plugin file saved: {}", targetPath);
 
             // 3. 加载插件
             pluginManager.loadPlugin(targetPath.toFile());
 
-            // 4. 自动启用
-            String pluginId = extractPluginId(fileName);
+            // 4. 通过 JAR 内的描述符获取插件ID并自动启用（不再从文件名解析）
+            String pluginId = pluginManager.resolvePluginIdFromJar(targetPath.toFile());
             pluginManager.enablePlugin(pluginId);
 
             return Result.success(pluginId, "插件安装成功");
@@ -173,8 +185,8 @@ public class PlatformController {
     public Result<Void> uninstallPlugin(
             @Parameter(name = "id", description = "插件ID") @PathVariable("id") String id) {
         try {
-            // 1. 查找插件 JAR
-            String jarPath = findPluginJar(id);
+            // 1. 查找插件 JAR（通过读取每个 JAR 的 plugin.yml 比对 ID）
+            String jarPath = pluginManager.tryFindPluginJar(id);
 
             // 2. 卸载插件
             pluginManager.unloadPlugin(id);
@@ -213,30 +225,5 @@ public class PlatformController {
         }
     }
 
-    /**
-     * 从文件名提取插件 ID
-     */
-    private String extractPluginId(String fileName) {
-        // 假设文件名格式: plugin-secret-capsule-1.0.0.jar
-        return fileName
-                .replaceFirst("^plugin-", "")
-                .replaceFirst("-[\\d.]+\\.jar$", "");
-    }
-
-    /**
-     * 查找插件 JAR 文件路径
-     */
-    private String findPluginJar(String pluginId) {
-        try {
-            return Files.list(Paths.get(pluginDir))
-                    .filter(p -> p.toString().endsWith(".jar"))
-                    .filter(p -> p.getFileName().toString().contains(pluginId))
-                    .findFirst()
-                    .map(Path::toString)
-                    .orElse(null);
-        } catch (Exception e) {
-            log.error("Failed to find plugin JAR: {}", pluginId, e);
-            return null;
-        }
-    }
+    // 说明：不再从文件名中提取插件ID，统一由 PluginManager 读取 JAR 内的 plugin.yml 确定插件ID
 }

@@ -20,6 +20,7 @@ import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.io.File;
+import java.io.InputStream;
 import java.io.IOException;
 import java.net.URL;
 import java.nio.file.Files;
@@ -31,6 +32,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * 插件管理器
@@ -58,6 +60,8 @@ public class PluginManager {
 
     @Value("${platform.plugin.auto-load:true}")
     private boolean autoLoad;
+
+    // 保留核心修复，移除不必要的诊断开关
 
     /**
      * 自动加载插件目录下的所有插件
@@ -245,10 +249,8 @@ public class PluginManager {
      * 卸载插件
      */
     public synchronized void unloadPlugin(String pluginId) throws Exception {
-        PluginContext context = pluginContexts.remove(pluginId);
-        if (context == null) {
-            throw new PluginException("Plugin not found: " + pluginId);
-        }
+        // 先不要从全局上下文中移除，避免后续禁用步骤无法获取到上下文
+        PluginContext context = getContext(pluginId);
 
         log.info("Unloading plugin: {}", pluginId);
 
@@ -277,6 +279,9 @@ public class PluginManager {
         } catch (IOException e) {
             log.error("Error closing ClassLoader: {}", pluginId, e);
         }
+
+        // 5. 所有清理完成后，再从全局上下文中移除
+        pluginContexts.remove(pluginId);
 
         log.info("✅ Plugin unloaded: {}", pluginId);
     }
@@ -434,8 +439,19 @@ public class PluginManager {
                 throw new PluginException("plugin.yml not found in " + jarFile.getName());
             }
 
-            return PluginDescriptor.load(jar.getInputStream(entry));
+            // 必须在关闭 JarFile 之前关闭其返回的 InputStream，避免 Windows 下 JAR 被占用
+            try (InputStream is = jar.getInputStream(entry)) {
+                return PluginDescriptor.load(is);
+            }
         }
+    }
+
+    /**
+     * 公开方法：从 JAR 内部的描述文件解析插件ID
+     */
+    public String resolvePluginIdFromJar(File jarFile) throws Exception {
+        PluginDescriptor descriptor = readDescriptor(jarFile);
+        return descriptor.getId();
     }
 
     /**
@@ -462,8 +478,8 @@ public class PluginManager {
      * 查找插件 JAR 文件
      */
     private String findPluginJar(String pluginId) {
-        try {
-            return Files.list(Paths.get(pluginDir))
+        try (Stream<Path> stream = Files.list(Paths.get(pluginDir))) {
+            return stream
                     .filter(p -> p.toString().endsWith(".jar"))
                     .filter(p -> {
                         try {
@@ -479,6 +495,17 @@ public class PluginManager {
                     .orElseThrow(() -> new PluginException("JAR not found for plugin: " + pluginId));
         } catch (IOException e) {
             throw new PluginException("Failed to search plugin JAR", e);
+        }
+    }
+
+    /**
+     * 公开方法：尝试查找插件JAR，未找到时返回 null 而不是抛异常
+     */
+    public String tryFindPluginJar(String pluginId) {
+        try {
+            return findPluginJar(pluginId);
+        } catch (PluginException ex) {
+            return null;
         }
     }
 

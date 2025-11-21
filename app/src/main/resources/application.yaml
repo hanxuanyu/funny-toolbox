@@ -25,5 +25,5 @@ logging:
 # 平台配置
 platform:
   plugin:
-    dir: ./plugins
+    dir: plugins
     auto-load: true

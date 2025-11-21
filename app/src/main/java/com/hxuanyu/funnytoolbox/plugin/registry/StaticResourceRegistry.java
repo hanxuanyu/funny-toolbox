@@ -5,6 +5,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.ResourceLoader;
 import org.springframework.stereotype.Component;
+import org.springframework.core.io.UrlResource;
 import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 import org.springframework.web.servlet.resource.ResourceResolver;
@@ -12,7 +13,10 @@ import org.springframework.web.servlet.resource.ResourceResolverChain;
 
 import jakarta.servlet.http.HttpServletRequest;
 
-import java.util.ArrayList;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.URL;
+import java.net.URLConnection;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -130,6 +134,17 @@ public class StaticResourceRegistry implements WebMvcConfigurer {
             try {
                 Resource resource = resourceLoader.getResource(full);
                 if (resource != null && resource.exists() && resource.isReadable()) {
+                    // 对于 jar:file: 协议，返回禁用缓存的包装，避免句柄被锁
+                    try {
+                        URL url = resource.getURL();
+                        String protocol = url.getProtocol();
+                        if (protocol != null && protocol.startsWith("jar")) {
+                            log.debug("Resolving plugin static resource (non-cache) [{}] -> {}", requestPath, url);
+                            return new NonCachingUrlResource(url);
+                        }
+                    } catch (Exception ignore) {
+                        // 忽略并返回原资源
+                    }
                     return resource;
                 }
             } catch (Exception e) {
@@ -145,6 +160,30 @@ public class StaticResourceRegistry implements WebMvcConfigurer {
                                      ResourceResolverChain chain) {
             // 保持原样
             return resourcePath;
+        }
+    }
+
+    /**
+     * 禁用 URLConnection 缓存的 UrlResource，避免 Windows 下 JarURLConnection 锁文件。
+     */
+    static class NonCachingUrlResource extends UrlResource {
+        public NonCachingUrlResource(URL url) {
+            super(url);
+        }
+
+        @Override
+        public InputStream getInputStream() throws IOException {
+            URLConnection con = getURL().openConnection();
+            con.setUseCaches(false);
+            try {
+                return con.getInputStream();
+            } catch (IOException ex) {
+                try {
+                    con.getInputStream().close();
+                } catch (IOException ignore) {
+                }
+                throw ex;
+            }
         }
     }
 }
