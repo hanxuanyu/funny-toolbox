@@ -56,7 +56,9 @@ public class WebMvcConfig implements WebMvcConfigurer {
 
         registry.addResourceHandler("/**")
                 .addResourceLocations("classpath:/static/")
-                .resourceChain(true)
+                // 注意：在可执行 JAR 中，开启资源链有时会导致自定义 PathResourceResolver 的解析出现异常，
+                // 进而无法正确返回静态资源。这里关闭资源链以提升兼容性（IDE 与打包后行为一致）。
+                .resourceChain(false)
                 .addResolver(new PathResourceResolver() {
                     // 文档和静态资源白名单前缀
                     private final String[] DOC_PREFIXES = new String[]{
