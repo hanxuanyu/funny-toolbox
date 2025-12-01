@@ -22,6 +22,11 @@ logging:
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
 
+# 简易内置认证配置（请根据需要修改）
+auth:
+  username: admin
+  password: admin123
+
 # 平台配置
 platform:
   plugin:
