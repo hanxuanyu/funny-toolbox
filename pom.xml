@@ -2,19 +2,35 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
-    <groupId>com.hxuanyu</groupId>
+    <groupId>com.hxuanyu.toolbox</groupId>
     <artifactId>funny-toolbox</artifactId>
-    <version>0.0.1</version>
+    <version>0.0.2</version>
     <packaging>pom</packaging>
     <name>funny-toolbox</name>
-    <description>funny-toolbox</description>
-    <url/>
+    <description>funny-toolbox parent pom</description>
+    <url>https://github.com/hanxuanyu/funny-toolbox</url>
     <licenses>
-        <license/>
+        <license>
+            <name>The Apache Software License, Version 2.0</name>
+            <url>http://www.apache.org/licenses/LICENSE-2.0.txt</url>
+        </license>
     </licenses>
     <developers>
-        <developer/>
+        <developer>
+            <id>hxuanyu</id>
+            <name>hxuanyu</name>
+            <email>hxuanyu520@gmail.com</email>
+            <roles>
+                <role>Project Manager</role>
+                <role>Architect</role>
+            </roles>
+        </developer>
     </developers>
+    <scm>
+        <connection>https://github.com/hanxuanyu/funny-toolbox.git</connection>
+        <developerConnection>scm:git:ssh://git@github.com:hanxuanyu/funny-toolbox.git</developerConnection>
+        <url>https://github.com/hanxuanyu/funny-toolbox</url>
+    </scm>
     <modules>
         <module>plugin-api</module>
         <module>app</module>
@@ -23,6 +39,7 @@
     <properties>
         <java.version>21</java.version>
         <spring.boot.version>3.5.8</spring.boot.version>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     </properties>
 
     <dependencyManagement>
@@ -50,4 +67,39 @@
             </dependency>
         </dependencies>
     </dependencyManagement>
+    <build>
+        <plugins>
+            <!-- 仅发布父 POM 到中央仓库（不影响子模块） -->
+            <plugin>
+                <groupId>org.sonatype.central</groupId>
+                <artifactId>central-publishing-maven-plugin</artifactId>
+                <version>0.4.0</version>
+                <extensions>true</extensions>
+                <inherited>false</inherited>
+                <configuration>
+                    <publishingServerId>maven-central</publishingServerId>
+                    <tokenAuth>true</tokenAuth>
+                </configuration>
+            </plugin>
+            <!-- 对父 POM 产物进行 GPG 签名（仅父级，避免对子模块生效） -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-gpg-plugin</artifactId>
+                <version>1.5</version>
+                <inherited>false</inherited>
+                <configuration>
+                    <keyname>hxuanyu</keyname>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>sign-parent-pom</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>sign</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
 </project>
