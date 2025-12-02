@@ -288,6 +288,108 @@ public class PlatformController {
         }
     }
 
+    /**
+     * 下载已有插件包（支持 .jar 与 .zip）。
+     * 使用方式（二选一）：
+     * - 通过文件名下载：/api/platform/plugins/download?fileName=xxx.jar（或 .zip），文件需位于平台插件目录下；
+     * - 通过插件ID下载：/api/platform/plugins/download?pluginId=demo-plugin[&ext=jar|zip]
+     *   若不指定 ext，则优先尝试 JAR，不存在时再尝试 ZIP。
+     * 注意：该接口受 AuthenticationFilter 保护，必须已登录。
+     */
+    @Operation(summary = "下载插件包", description = "从平台插件目录下载已存在的 JAR 或 ZIP 插件包")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "成功返回文件流"),
+            @ApiResponse(responseCode = "404", description = "未找到插件包"),
+            @ApiResponse(responseCode = "400", description = "参数不合法")
+    })
+    @GetMapping("/plugins/download")
+    public ResponseEntity<byte[]> downloadPluginPackage(
+            @Parameter(description = "插件包文件名（包含扩展名 .jar 或 .zip），位于 platform.plugin.dir 目录下")
+            @RequestParam(value = "fileName", required = false) String fileName,
+            @Parameter(description = "插件ID，与 ext 配合或自动探测 .jar/.zip")
+            @RequestParam(value = "pluginId", required = false) String pluginId,
+            @Parameter(description = "首选扩展名：jar 或 zip，可选")
+            @RequestParam(value = "ext", required = false) String preferredExt
+    ) {
+        try {
+            Path filePath = null;
+            String downloadName = null;
+
+            // 方式一：直接通过文件名下载
+            if (!isBlank(fileName)) {
+                String safeName = new File(fileName).getName();
+                Path base = Paths.get(pluginDir).toAbsolutePath().normalize();
+                Path candidate = base.resolve(safeName).normalize();
+                if (!candidate.startsWith(base)) {
+                    return ResponseEntity.badRequest().build();
+                }
+                if (!Files.exists(candidate) || Files.isDirectory(candidate)) {
+                    return ResponseEntity.notFound().build();
+                }
+                filePath = candidate;
+                downloadName = safeName;
+            }
+
+            // 方式二：通过插件ID定位包文件
+            if (filePath == null && !isBlank(pluginId)) {
+                String pathStr = null;
+                String ext = preferredExt == null ? null : preferredExt.trim().toLowerCase();
+                try {
+                    if ("zip".equals(ext)) {
+                        pathStr = pluginManager.tryFindPluginZip(pluginId);
+                    } else if ("jar".equals(ext)) {
+                        pathStr = pluginManager.tryFindPluginJar(pluginId);
+                    } else {
+                        // 未指定时，先找 JAR，再找 ZIP
+                        try { pathStr = pluginManager.tryFindPluginJar(pluginId); } catch (Exception ignore) {}
+                        if (pathStr == null) {
+                            pathStr = pluginManager.tryFindPluginZip(pluginId);
+                        }
+                    }
+                } catch (Exception e) {
+                    // tryFind* 可能抛异常，统一视为未找到
+                    pathStr = null;
+                }
+
+                if (pathStr == null) {
+                    return ResponseEntity.notFound().build();
+                }
+                Path candidate = Paths.get(pathStr).toAbsolutePath().normalize();
+                if (!Files.exists(candidate) || Files.isDirectory(candidate)) {
+                    return ResponseEntity.notFound().build();
+                }
+                // 仅允许下载平台插件目录中的文件
+                Path base = Paths.get(pluginDir).toAbsolutePath().normalize();
+                if (!candidate.startsWith(base)) {
+                    return ResponseEntity.status(403).build();
+                }
+                filePath = candidate;
+                downloadName = candidate.getFileName().toString();
+            }
+
+            if (filePath == null) {
+                return ResponseEntity.badRequest().build();
+            }
+
+            byte[] bytes = Files.readAllBytes(filePath);
+            HttpHeaders headers = new HttpHeaders();
+            String lower = downloadName.toLowerCase();
+            if (lower.endsWith(".jar")) {
+                headers.setContentType(MediaType.APPLICATION_OCTET_STREAM);
+            } else if (lower.endsWith(".zip")) {
+                headers.setContentType(MediaType.APPLICATION_OCTET_STREAM);
+            } else {
+                headers.setContentType(MediaType.APPLICATION_OCTET_STREAM);
+            }
+            headers.setContentLength(bytes.length);
+            headers.set(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + downloadName + "\"");
+            return ResponseEntity.ok().headers(headers).body(bytes);
+        } catch (Exception ex) {
+            log.error("下载插件包失败: fileName={}, pluginId={}", fileName, pluginId, ex);
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+
     // ===================== 前端-only 插件打包 =====================
 
     /**
