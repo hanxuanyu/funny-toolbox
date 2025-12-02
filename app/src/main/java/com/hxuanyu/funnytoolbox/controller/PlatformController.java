@@ -42,6 +42,12 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
 
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpSession;
+
+import com.hxuanyu.funnytoolbox.auth.AuthStatus;
+import com.hxuanyu.funnytoolbox.config.AuthenticationFilter;
+
 /**
  * 平台管理接口
  */
@@ -72,6 +78,35 @@ public class PlatformController {
     @GetMapping("/plugins")
     public Result<List<PluginDTO>> listPlugins() {
         return Result.success(pluginManager.getAllPlugins());
+    }
+
+    /**
+     * 获取当前会话的认证状态（与后台操作一致的访问控制）。
+     * 注意：该接口位于 /api/platform/** 下，未登录时会被 AuthenticationFilter 拦截并返回 401。
+     */
+    @Operation(summary = "认证状态", description = "返回当前会话是否已认证及基本信息；未登录则在过滤器阶段返回 401")
+    @GetMapping("/auth/status")
+    public Result<AuthStatus> authStatus(HttpServletRequest request) {
+        HttpSession session = request.getSession(false);
+        boolean authenticated = session != null && Boolean.TRUE.equals(session.getAttribute(AuthenticationFilter.SESSION_AUTH_KEY));
+        AuthStatus status = new AuthStatus();
+        status.setAuthenticated(authenticated);
+        status.setSessionId(session != null ? session.getId() : null);
+        // 尝试读取用户名（若登录流程有设置）
+        String user = session != null ? (String) session.getAttribute("USERNAME") : null;
+        status.setUser(user);
+        status.setServerTime(System.currentTimeMillis());
+        return Result.success(status);
+    }
+
+    /**
+     * 轻量探活：与后台操作一致的访问控制，用于前端快速判断是否需要跳转登录。
+     * 未登录会在过滤器阶段返回 401。
+     */
+    @Operation(summary = "受保护探活", description = "HEAD 探活，未登录 401，已登录 200，无响应体")
+    @RequestMapping(value = "/secure/ping", method = RequestMethod.HEAD)
+    public ResponseEntity<Void> securePing() {
+        return ResponseEntity.ok().build();
     }
 
     /**
