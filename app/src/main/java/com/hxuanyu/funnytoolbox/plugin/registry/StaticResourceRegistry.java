@@ -147,20 +147,15 @@ public class StaticResourceRegistry implements WebMvcConfigurer {
 
             String full = base + innerPath;
             try {
-                Resource resource = resourceLoader.getResource(full);
-                if (resource != null && resource.exists() && resource.isReadable()) {
-                    // 对于 jar:file: 协议，返回禁用缓存的包装，避免句柄被锁
-                    try {
-                        URL url = resource.getURL();
-                        String protocol = url.getProtocol();
-                        if (protocol != null && protocol.startsWith("jar")) {
-                            log.debug("Resolving plugin static resource (non-cache) [{}] -> {}", requestPath, url);
-                            return new NonCachingUrlResource(url);
-                        }
-                    } catch (Exception ignore) {
-                        // 忽略并返回原资源
-                    }
-                    return resource;
+                // 尝试直接解析
+                Resource resource = tryResolve(full, requestPath);
+                if (resource != null) return resource;
+
+                // 兼容以 / 结尾或目录访问：尝试补全为 index.html
+                if (innerPath.isEmpty() || innerPath.endsWith("/")) {
+                    String fullIndex = base + innerPath + "index.html";
+                    Resource indexRes = tryResolve(fullIndex, requestPath);
+                    if (indexRes != null) return indexRes;
                 }
             } catch (Exception e) {
                 log.warn("Failed to resolve plugin static resource: {} -> {}", requestPath, full, e);
@@ -175,6 +170,28 @@ public class StaticResourceRegistry implements WebMvcConfigurer {
                                      ResourceResolverChain chain) {
             // 保持原样
             return resourcePath;
+        }
+
+        private Resource tryResolve(String location, String requestPath) {
+            try {
+                Resource resource = resourceLoader.getResource(location);
+                if (resource != null && resource.exists() && resource.isReadable()) {
+                    try {
+                        URL url = resource.getURL();
+                        String protocol = url.getProtocol();
+                        if (protocol != null && protocol.startsWith("jar")) {
+                            log.debug("Resolving plugin static resource (non-cache) [{}] -> {}", requestPath, url);
+                            return new NonCachingUrlResource(url);
+                        }
+                    } catch (Exception ignore) {
+                        // 忽略并返回原资源
+                    }
+                    return resource;
+                }
+            } catch (Exception ex) {
+                // 忽略具体异常，返回空交由上层处理
+            }
+            return null;
         }
     }
 

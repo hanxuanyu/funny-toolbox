@@ -18,7 +18,10 @@ import java.nio.charset.StandardCharsets;
 import java.util.Optional;
 
 /**
- * 在插件被禁用时，拦截访问其 API 与静态资源的请求，并返回明确提示信息。
+ * 在插件被禁用时，拦截访问其后端 API 的请求，并返回明确提示信息。
+ *
+ * 优化：不再拦截静态资源路径 /plugins/**。静态资源是否可访问由是否注册映射决定：
+ *  - 启用时注册，禁用时注销；未注册将自然返回 404，无需过滤器额外拦截。
  */
 @Component
 public class PluginAccessFilter extends OncePerRequestFilter {
@@ -35,21 +38,16 @@ public class PluginAccessFilter extends OncePerRequestFilter {
 
         String path = getRequestPath(request);
 
-        // 仅拦截插件相关路径：/plugins/** 或 匹配到某插件的 API 前缀
-        String pluginId = null;
-
+        // 优先放行静态资源：/plugins/** 不做启用状态拦截（未注册时会返回 404）
         if (path.startsWith("/plugins/")) {
-            // 提取 /plugins/{id}/... 的 {id}
-            String sub = path.substring("/plugins/".length());
-            int idx = sub.indexOf('/') ;
-            pluginId = (idx >= 0) ? sub.substring(0, idx) : sub; // 允许直接访问 /plugins/{id}
-        } else {
-            Optional<String> resolved = pluginManager.resolvePluginIdByApiPath(path);
-            pluginId = resolved.orElse(null);
+            filterChain.doFilter(request, response);
+            return;
         }
 
+        // 仅对后端 API 前缀做拦截控制
+        Optional<String> resolved = pluginManager.resolvePluginIdByApiPath(path);
+        String pluginId = resolved.orElse(null);
         if (pluginId != null && !pluginId.isEmpty()) {
-            // 若插件不存在或未启用，则直接给出明确提示
             Optional<PluginStatus> statusOpt = pluginManager.getPluginStatus(pluginId);
             if (statusOpt.isEmpty() || statusOpt.get() != PluginStatus.ENABLED) {
                 writeDisabledResponse(response, pluginId);

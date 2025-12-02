@@ -46,6 +46,8 @@ import org.apache.commons.io.FileUtils;
 public class PluginManager {
 
     private final Map<String, PluginContext> pluginContexts = new ConcurrentHashMap<>();
+    // 处于重载过程中的插件ID集合，用于在卸载阶段跳过包文件删除（以便随后从同一包重新加载）
+    private final Set<String> reloadingIds = ConcurrentHashMap.newKeySet();
 
     @Autowired
     private RouteRegistry routeRegistry;
@@ -317,7 +319,33 @@ public class PluginManager {
         }
 
         // 5. 所有清理完成后，再从全局上下文中移除
-        pluginContexts.remove(pluginId);
+        try {
+            // 优化：对前端-only（ZIP）插件，尝试删除插件目录下的 ZIP 包文件
+            // 仅当记录了包路径且位于平台插件目录下时才执行删除，避免误删外部路径或非 ZIP 包
+            // 若当前处于 reload 流程中，则跳过删除，以便随后从相同包重新加载
+            if (context.getPackageType() == PluginContext.PackageType.ZIP && !reloadingIds.contains(pluginId)) {
+                String pkgPath = context.getPackageFilePath();
+                if (pkgPath != null && !pkgPath.isEmpty()) {
+                    Path pkg = Paths.get(pkgPath).toAbsolutePath().normalize();
+                    Path pluginsBase = Paths.get(pluginDir).toAbsolutePath().normalize();
+                    if (Files.exists(pkg) && pkg.toString().toLowerCase().endsWith(".zip") && pkg.startsWith(pluginsBase)) {
+                        boolean deleted = deleteWithRetry(pkg.toFile(), 5, 300);
+                        if (deleted) {
+                            log.info("Deleted ZIP plugin package file: {}", pkg);
+                        } else {
+                            log.warn("Failed to delete ZIP plugin package after retries: {}", pkg);
+                        }
+                    } else {
+                        log.debug("Skip deleting plugin package. Exists? {} EndsWith .zip? {} In plugins dir? {}",
+                                Files.exists(pkg), pkg.toString().toLowerCase().endsWith(".zip"), pkg.startsWith(pluginsBase));
+                    }
+                }
+            }
+        } catch (Exception ex) {
+            log.warn("Exception while trying to delete plugin package for {}: {}", pluginId, ex.getMessage());
+        } finally {
+            pluginContexts.remove(pluginId);
+        }
 
         log.info("✅ Plugin unloaded: {}", pluginId);
     }
@@ -327,16 +355,43 @@ public class PluginManager {
      */
     public synchronized void reloadPlugin(String pluginId) throws Exception {
         PluginContext context = getContext(pluginId);
-        String jarPath = findPluginJar(pluginId);
 
-        // 卸载
-        unloadPlugin(pluginId);
+        // 优先使用已记录的原始包路径（兼容 JAR / ZIP）
+        String packagePath = context.getPackageFilePath();
+        if (packagePath == null || packagePath.isEmpty() || !Files.exists(Paths.get(packagePath))) {
+            // 根据包类型或实际存在情况回退查找
+            if (context.getPackageType() == PluginContext.PackageType.JAR) {
+                packagePath = findPluginJar(pluginId);
+            } else if (context.getPackageType() == PluginContext.PackageType.ZIP) {
+                packagePath = findPluginZip(pluginId);
+            } else {
+                // 未知时，先尝试 JAR，再尝试 ZIP
+                String tryJar = null;
+                try {
+                    tryJar = findPluginJar(pluginId);
+                } catch (PluginException ignored) { }
+                if (tryJar != null) {
+                    packagePath = tryJar;
+                } else {
+                    packagePath = findPluginZip(pluginId);
+                }
+            }
+        }
+
+        // 卸载（标记重载过程，避免卸载阶段删除包文件）
+        reloadingIds.add(pluginId);
+        try {
+            unloadPlugin(pluginId);
+        } finally {
+            // 确保标记被清理
+            reloadingIds.remove(pluginId);
+        }
 
         // 等待资源释放
         Thread.sleep(500);
 
         // 重新加载
-        loadPlugin(new File(jarPath));
+        loadPlugin(new File(packagePath));
 
         // 自动启用
         enablePlugin(pluginId);
@@ -634,6 +689,30 @@ public class PluginManager {
         }
     }
 
+    /**
+     * 查找插件 ZIP 文件（用于前端-only 插件）。
+     */
+    private String findPluginZip(String pluginId) {
+        try (Stream<Path> stream = Files.list(Paths.get(pluginDir))) {
+            return stream
+                    .filter(p -> p.toString().endsWith(".zip"))
+                    .filter(p -> {
+                        try {
+                            File file = p.toFile();
+                            PluginDescriptor desc = readDescriptorFromArchive(file);
+                            return desc.getId().equals(pluginId);
+                        } catch (Exception e) {
+                            return false;
+                        }
+                    })
+                    .findFirst()
+                    .map(Path::toString)
+                    .orElseThrow(() -> new PluginException("ZIP not found for plugin: " + pluginId));
+        } catch (IOException e) {
+            throw new PluginException("Failed to search plugin ZIP", e);
+        }
+    }
+
     // ===================== 静态资源提取与缓存 =====================
 
     private Path getStaticCacheDir(String pluginId) {
@@ -754,6 +833,25 @@ public class PluginManager {
         return cacheDir.toAbsolutePath().toString();
     }
 
+    // ===================== 文件删除重试（Windows 友好） =====================
+    private boolean deleteWithRetry(File file, int attempts, long sleepMillis) {
+        if (file == null) return false;
+        for (int i = 0; i < Math.max(1, attempts); i++) {
+            try {
+                if (!file.exists()) return true;
+                Files.deleteIfExists(file.toPath());
+                if (!file.exists()) return true;
+            } catch (Exception ignore) {
+            }
+            try {
+                Thread.sleep(Math.max(0, sleepMillis));
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+            }
+        }
+        return !file.exists();
+    }
+
     // ===================== 插件状态持久化 =====================
 
     /**
@@ -806,6 +904,17 @@ public class PluginManager {
     public String tryFindPluginJar(String pluginId) {
         try {
             return findPluginJar(pluginId);
+        } catch (PluginException ex) {
+            return null;
+        }
+    }
+
+    /**
+     * 公开方法：尝试查找插件ZIP（前端-only），未找到时返回 null 而不是抛异常
+     */
+    public String tryFindPluginZip(String pluginId) {
+        try {
+            return findPluginZip(pluginId);
         } catch (PluginException ex) {
             return null;
         }
