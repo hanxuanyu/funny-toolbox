@@ -32,6 +32,8 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.apache.commons.io.FileUtils;
@@ -81,20 +83,20 @@ public class PluginManager {
             return;
         }
 
-        File[] jarFiles = dir.listFiles((d, name) -> name.endsWith(".jar"));
-        if (jarFiles == null || jarFiles.length == 0) {
+        File[] pkgFiles = dir.listFiles((d, name) -> name.endsWith(".jar") || name.endsWith(".zip"));
+        if (pkgFiles == null || pkgFiles.length == 0) {
             log.info("No plugin found in {}", dir.getAbsolutePath());
             return;
         }
 
-        log.info("Found {} plugin(s), loading...", jarFiles.length);
+        log.info("Found {} plugin package(s), loading...", pkgFiles.length);
 
-        for (File jarFile : jarFiles) {
+        for (File pkgFile : pkgFiles) {
             try {
-                loadPlugin(jarFile);
+                loadPlugin(pkgFile);
 
                 // 自动启用
-                PluginDescriptor descriptor = readDescriptor(jarFile);
+                PluginDescriptor descriptor = readDescriptorFromArchive(pkgFile);
                 String pluginId = descriptor.getId();
                 boolean shouldEnable = readPersistedEnabledOrDefaultTrue(pluginId);
                 if (shouldEnable) {
@@ -104,7 +106,7 @@ public class PluginManager {
                 }
 
             } catch (Exception e) {
-                log.error("Failed to load plugin: {}", jarFile.getName(), e);
+                log.error("Failed to load plugin: {}", pkgFile.getName(), e);
             }
         }
     }
@@ -112,69 +114,69 @@ public class PluginManager {
     /**
      * 加载插件
      */
-    public synchronized void loadPlugin(File jarFile) throws Exception {
-        log.info("Loading plugin from: {}", jarFile.getAbsolutePath());
+    public synchronized void loadPlugin(File packageFile) throws Exception {
+        log.info("Loading plugin from: {}", packageFile.getAbsolutePath());
 
-        // 1. 读取插件描述符
-        PluginDescriptor descriptor = readDescriptor(jarFile);
+        // 1. 读取插件描述符（兼容 jar/zip 档）
+        PluginDescriptor descriptor = readDescriptorFromArchive(packageFile);
         String pluginId = descriptor.getId();
 
         if (pluginContexts.containsKey(pluginId)) {
             throw new PluginException("Plugin already loaded: " + pluginId);
         }
 
-        // 2. 创建类加载器
-        URL jarUrl = jarFile.toURI().toURL();
-        PluginClassLoader classLoader = new PluginClassLoader(
-                pluginId,
-                new URL[]{jarUrl},
-                this.getClass().getClassLoader()
-        );
-
-        // 3. 创建插件上下文
+        // 2. 创建插件上下文
         PluginContext context = new PluginContext();
         context.setPluginId(pluginId);
         context.setDescriptor(descriptor);
-        context.setClassLoader(classLoader);
         context.setStatus(PluginStatus.LOADED);
         context.setDataDirectory(createPluginDirectory("data/plugins/" + pluginId));
         context.setConfigDirectory(createPluginDirectory("config/plugins/" + pluginId));
         context.setLoadTime(LocalDateTime.now());
+        context.setPackageFilePath(packageFile.getAbsolutePath());
+        context.setPackageType(packageFile.getName().endsWith(".jar") ? PluginContext.PackageType.JAR : PluginContext.PackageType.ZIP);
+        // 3. 如果存在 mainClass（通常是 .jar 后端插件），则创建类加载器和 Spring 上下文
+        if (StringUtils.hasText(descriptor.getMainClass())) {
+            URL pkgUrl = packageFile.toURI().toURL();
+            PluginClassLoader classLoader = new PluginClassLoader(
+                    pluginId,
+                    new URL[]{pkgUrl},
+                    this.getClass().getClassLoader()
+            );
+            context.setClassLoader(classLoader);
 
-        // 4. 创建插件的 Spring 上下文
-        AnnotationConfigApplicationContext pluginAppContext =
-                new AnnotationConfigApplicationContext();
+            // 创建插件 Spring 上下文
+            AnnotationConfigApplicationContext pluginAppContext = new AnnotationConfigApplicationContext();
+            pluginAppContext.setClassLoader(classLoader);
+            pluginAppContext.setParent(platformContext);
 
-        pluginAppContext.setClassLoader(classLoader);
-        pluginAppContext.setParent(platformContext);
+            // 平台上下文 Bean
+            PlatformContextImpl platformCtx = new PlatformContextImpl(context);
+            pluginAppContext.registerBean(com.hxuanyu.toolbox.plugin.api.PlatformContext.class, () -> platformCtx);
+            pluginAppContext.registerBean(PlatformContextImpl.class, () -> platformCtx);
 
-        // 4.1 先创建平台上下文并注册为插件 Spring 上下文中的 Bean，方便插件中自动注入使用
-        PlatformContextImpl platformCtx = new PlatformContextImpl(context);
-        // 使用 registerBean 将实例注入为可按类型注入的 Bean
-        pluginAppContext.registerBean(com.hxuanyu.toolbox.plugin.api.PlatformContext.class, () -> platformCtx);
-        // 也注册实现类，便于需要时按实现类注入
-        pluginAppContext.registerBean(PlatformContextImpl.class, () -> platformCtx);
+            // 扫描并刷新
+            String basePackage = getBasePackage(descriptor.getMainClass());
+            if (StringUtils.hasText(basePackage)) {
+                pluginAppContext.scan(basePackage);
+            }
+            pluginAppContext.refresh();
+            context.setApplicationContext(pluginAppContext);
 
-        // 5. 扫描插件包
-        String basePackage = getBasePackage(descriptor.getMainClass());
-        if (StringUtils.hasText(basePackage)) {
-            pluginAppContext.scan(basePackage);
-        }
+            // 实例化主类
+            Class<?> mainClass = classLoader.loadClass(descriptor.getMainClass());
+            IPlugin pluginInstance = (IPlugin) mainClass.getDeclaredConstructor().newInstance();
+            context.setPluginInstance(pluginInstance);
 
-        pluginAppContext.refresh();
-        context.setApplicationContext(pluginAppContext);
-
-        // 6. 实例化插件主类
-        Class<?> mainClass = classLoader.loadClass(descriptor.getMainClass());
-        IPlugin pluginInstance = (IPlugin) mainClass.getDeclaredConstructor().newInstance();
-        context.setPluginInstance(pluginInstance);
-
-        // 7. 调用插件 onLoad（复用已注册的上下文实例）
-        try {
-            pluginInstance.onLoad(platformCtx);
-        } catch (Exception e) {
-            log.error("Plugin onLoad failed: {}", pluginId, e);
-            throw e;
+            // 调用 onLoad
+            try {
+                pluginInstance.onLoad(platformCtx);
+            } catch (Exception e) {
+                log.error("Plugin onLoad failed: {}", pluginId, e);
+                throw e;
+            }
+        } else {
+            log.info("Plugin {} has no mainClass, treated as frontend-only plugin.", pluginId);
         }
 
         // 8. 保存上下文
@@ -197,11 +199,15 @@ public class PluginManager {
         log.info("Enabling plugin: {}", pluginId);
 
         try {
-            // 1. 调用插件 onEnable
-            context.getPluginInstance().onEnable();
+            // 1. 调用插件 onEnable（如存在后端主类）
+            if (context.getPluginInstance() != null) {
+                context.getPluginInstance().onEnable();
+            }
 
-            // 2. 注册 API 路由
-            registerApiRoutes(context);
+            // 2. 注册 API 路由（仅后端插件）
+            if (context.getApplicationContext() != null) {
+                registerApiRoutes(context);
+            }
 
             // 3. 注册静态资源
             registerStaticResources(context);
@@ -240,10 +246,14 @@ public class PluginManager {
 
         try {
             // 1. 调用插件 onDisable
-            context.getPluginInstance().onDisable();
+            if (context.getPluginInstance() != null) {
+                context.getPluginInstance().onDisable();
+            }
 
             // 2. 注销 API 路由
-            unregisterApiRoutes(context);
+            if (!context.getRegisteredMappings().isEmpty()) {
+                unregisterApiRoutes(context);
+            }
 
             // 3. 注销静态资源
             unregisterStaticResources(context);
@@ -281,21 +291,27 @@ public class PluginManager {
 
         // 2. 调用插件 onUnload
         try {
-            context.getPluginInstance().onUnload();
+            if (context.getPluginInstance() != null) {
+                context.getPluginInstance().onUnload();
+            }
         } catch (Exception e) {
             log.error("Error in plugin onUnload: {}", pluginId, e);
         }
 
         // 3. 关闭 Spring 上下文
         try {
-            context.getApplicationContext().close();
+            if (context.getApplicationContext() != null) {
+                context.getApplicationContext().close();
+            }
         } catch (Exception e) {
             log.error("Error closing ApplicationContext: {}", pluginId, e);
         }
 
         // 4. 关闭类加载器
         try {
-            context.getClassLoader().close();
+            if (context.getClassLoader() != null) {
+                context.getClassLoader().close();
+            }
         } catch (IOException e) {
             log.error("Error closing ClassLoader: {}", pluginId, e);
         }
@@ -458,15 +474,24 @@ public class PluginManager {
 
         String urlPath = "/plugins/" + descriptor.getId() + "/**";
 
-        // 优化：将插件 JAR 内的静态资源解压到平台本地缓存目录，以避免通过 jar:file 协议直接访问导致的文件锁定
+        // 优化：将插件包内的静态资源解压到平台本地缓存目录（支持 JAR / ZIP）
         String resourceLocation;
         try {
-            String extractedDir = extractPluginStaticToCache(descriptor.getId(), basePath);
+            String extractedDir;
+            if (context.getPackageType() == PluginContext.PackageType.ZIP) {
+                extractedDir = extractZipStaticToCache(descriptor.getId(), context.getPackageFilePath(), basePath);
+            } else {
+                extractedDir = extractPluginStaticToCache(descriptor.getId(), basePath);
+            }
             resourceLocation = "file:" + ensureEndsWithSlash(extractedDir);
         } catch (Exception ex) {
-            log.warn("Failed to extract static resources for plugin {}, fallback to jar access: {}",
-                    descriptor.getId(), ex.getMessage());
-            resourceLocation = "jar:file:" + findPluginJar(descriptor.getId()) + "!" + ensureStartsWithSlash(basePath) + "/";
+            if (context.getPackageType() == PluginContext.PackageType.JAR) {
+                log.warn("Failed to extract static resources for plugin {}, fallback to jar access: {}",
+                        descriptor.getId(), ex.getMessage());
+                resourceLocation = "jar:file:" + findPluginJar(descriptor.getId()) + "!" + ensureStartsWithSlash(basePath) + "/";
+            } else {
+                throw new PluginException("Failed to extract static resources for ZIP plugin: " + descriptor.getId(), ex);
+            }
         }
 
         staticResourceRegistry.registerResources(descriptor.getId(), urlPath, resourceLocation);
@@ -532,6 +557,28 @@ public class PluginManager {
             try (InputStream is = jar.getInputStream(entry)) {
                 return PluginDescriptor.load(is);
             }
+        }
+    }
+
+    /**
+     * 读取插件描述符（兼容 JAR/ZIP 包）
+     */
+    private PluginDescriptor readDescriptorFromArchive(File packageFile) throws Exception {
+        String name = packageFile.getName().toLowerCase();
+        if (name.endsWith(".jar")) {
+            return readDescriptor(packageFile);
+        } else if (name.endsWith(".zip")) {
+            try (ZipFile zip = new ZipFile(packageFile)) {
+                ZipEntry entry = zip.getEntry("META-INF/plugin.yml");
+                if (entry == null) {
+                    throw new PluginException("plugin.yml not found in " + packageFile.getName());
+                }
+                try (InputStream is = zip.getInputStream(entry)) {
+                    return PluginDescriptor.load(is);
+                }
+            }
+        } else {
+            throw new PluginException("Unsupported plugin package type: " + packageFile.getName());
         }
     }
 
@@ -658,6 +705,52 @@ public class PluginManager {
             }
         }
 
+        return cacheDir.toAbsolutePath().toString();
+    }
+
+    /**
+     * 将 ZIP 插件包中 basePath 下的静态资源解压至本地缓存目录，返回缓存目录绝对路径。
+     */
+    private String extractZipStaticToCache(String pluginId, String zipPath, String basePath) throws IOException {
+        String normBase = basePath == null ? "static" : basePath;
+        if (normBase.startsWith("/")) normBase = normBase.substring(1);
+        if (!normBase.endsWith("/")) normBase = normBase + "/";
+
+        Path cacheDir = getStaticCacheDir(pluginId);
+        Files.createDirectories(cacheDir);
+
+        try {
+            if (Files.exists(cacheDir)) {
+                FileUtils.cleanDirectory(cacheDir.toFile());
+            }
+        } catch (IOException ignore) {
+        }
+
+        try (ZipFile zip = new ZipFile(zipPath)) {
+            Enumeration<? extends ZipEntry> entries = zip.entries();
+            while (entries.hasMoreElements()) {
+                ZipEntry entry = entries.nextElement();
+                String name = entry.getName();
+                if (!name.startsWith(normBase)) {
+                    continue;
+                }
+                String relative = name.substring(normBase.length());
+                if (relative.isEmpty()) continue;
+                if (relative.contains("..") || relative.startsWith("/")) continue;
+
+                Path outPath = cacheDir.resolve(relative).normalize();
+                if (!outPath.startsWith(cacheDir)) continue;
+
+                if (entry.isDirectory()) {
+                    Files.createDirectories(outPath);
+                } else {
+                    Files.createDirectories(outPath.getParent());
+                    try (InputStream is = zip.getInputStream(entry)) {
+                        Files.copy(is, outPath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                    }
+                }
+            }
+        }
         return cacheDir.toAbsolutePath().toString();
     }
 

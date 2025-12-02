@@ -6,17 +6,28 @@
 
 ## 1. 插件是什么
 
-插件以独立 JAR 的形式存在，内部包含：
+从本版本起，平台支持两种插件包类型：
+
+- 后端插件（JAR 包，含后端主类与可选前端资源）
+- 前端‑only 插件（ZIP 包，仅包含前端构建产物与元数据，无后端代码）
+
+两者都必须包含插件元数据文件 `META-INF/plugin.yml`。
+
+后端插件（JAR）内部通常包含：
 - 插件元数据文件：META-INF/plugin.yml
 - 插件主类（实现接口 com.hxuanyu.toolbox.plugin.api.IPlugin）
 - 可选的后端 API（Spring Web 控制器）
 - 可选的静态资源（前端页面、图片、JS/CSS 等）
 
-宿主应用会在启动或运行时扫描插件目录，读取每个 JAR 的 plugin.yml，加载主类，注册 API 路由和静态资源，并在平台菜单中展示插件入口。
+前端‑only 插件（ZIP）内部通常包含：
+- 插件元数据文件：META-INF/plugin.yml（无 `mainClass` 字段）
+- 前端构建产物（例如放在 `static/` 目录）
+
+宿主应用会在启动或运行时扫描插件目录，读取每个插件包（.jar 或 .zip）的 `plugin.yml`，对 JAR 插件加载主类并注册 API；对 ZIP 插件仅注册静态资源与菜单入口，并在平台菜单中展示插件入口。
 
 ## 2. 目录结构与必需文件
 
-典型的插件 JAR 内部结构如下：
+典型的后端插件（JAR）内部结构如下：
 
 ```
 your-plugin.jar
@@ -29,11 +40,22 @@ your-plugin.jar
    └─ ...
 ```
 
+典型的前端‑only 插件（ZIP）内部结构如下：
+
+```
+your-plugin.zip
+├─ META-INF/
+│  └─ plugin.yml            (必须存在，且不包含 mainClass)
+└─ static/                  (前端构建产物，目录名可自定义，需与 frontend.basePath 对应)
+   ├─ index.html
+   └─ ...
+```
+
 ## 3. plugin.yml 规范
 
 plugin.yml 是插件的“描述符”，用于向宿主声明插件的基本信息、入口类、前端和 API 配置等。
 
-示例（推荐完整写法）：
+示例（后端插件，推荐完整写法）：
 
 ```yaml
 id: secret-capsule
@@ -66,6 +88,30 @@ api:
 # 可选：依赖与权限（按需扩展）
 dependencies: []
 permissions: []
+```
+
+示例（前端‑only 插件，无后端主类）：
+
+```yaml
+id: image-viewer
+name: 图片浏览器
+version: 1.0.0
+description: 仅包含前端页面的插件示例
+author: Bob
+
+icon:
+  type: emoji
+  value: "🖼️"
+
+# 注意：没有 mainClass 字段
+
+frontend:
+  entry: /index.html     # 插件首页，相对 frontend.basePath 指向的目录
+  basePath: /static      # 前端静态资源的根目录（在包内的路径，建议使用 /static）
+
+# 无后端 API 配置也可
+# api:
+#   prefix: /api/image-viewer
 ```
 
 icon 对象的更多例子：
@@ -145,6 +191,8 @@ public class SecretCapsulePlugin implements IPlugin {
 
 确保将主类的全限定名写入 plugin.yml 的 `mainClass` 字段。
 
+前端‑only 插件无需也不应提供主类：省略 `mainClass` 即可。此类插件没有后端生命周期（不会创建 ClassLoader 和 Spring 上下文），仅注册静态资源与菜单。
+
 ## 5. 暴露后端 API（可选）
 
 如果你的插件需要后端接口：
@@ -170,7 +218,10 @@ public class HelloController {
 
 ## 6. 前端与静态资源（可选）
 
-将前端构建产物（index.html、JS/CSS、图片等）放入插件 JAR 的 `/static` 目录。
+将前端构建产物（index.html、JS/CSS、图片等）：
+- 若为 JAR 插件，放入 JAR 的 `/static` 目录（或自定义目录并在 `frontend.basePath` 指定）。
+- 若为 ZIP 插件，放入 ZIP 中与 `frontend.basePath` 对应的目录（常用 `/static`）。
+
 在 plugin.yml 中：
 - `frontend.entry` 指定首页（如 /index.html）
 - `frontend.basePath` 一般为 `/static`
@@ -185,18 +236,38 @@ public class HelloController {
 /plugin/{pluginId}
 ```
 
+实现细节与注意事项：
+- 宿主在启用插件时，会将插件包中的 `frontend.basePath` 目录提取到本地缓存目录：`data/static-cache/{pluginId}`，并以 `file:` 形式提供静态资源，避免 `jar:file:` 访问造成的锁定问题。
+- ZIP 插件若提取失败会报错并终止启用（不会回退到 zip 内直接读取）。JAR 插件在提取失败时会兜底回退为 `jar:file:` 读取。
+- 最终前端入口 URL 可通过 `PluginDTO.frontendEntry` 获取，平台默认规则会将 `/static` 前缀去除后拼接在 `/plugins/{pluginId}` 之后。
+
 ## 7. 打包与发布
 
-建议使用 Maven/Gradle 构建插件工程，确保最终产物是一个包含 META-INF/plugin.yml 的 JAR。
+根据类型选择打包方式：
 
-关键点：
-- 将 `plugin-api` 作为编译依赖（compileOnly 或 provided 更合适），避免将宿主 API 打包进插件。
-- 确保 JAR 内存在 `META-INF/plugin.yml`。
-- 若使用第三方库，请合理选择打包策略（Shade 或在宿主可见的 ClassLoader 下可加载）。
+1) 后端插件（JAR）
+- 使用 Maven/Gradle 构建插件工程，产物为包含 `META-INF/plugin.yml` 的 JAR。
+- 关键点：
+  - 将 `plugin-api` 作为编译依赖（compileOnly 或 provided 更合适），避免将宿主 API 打包进插件。
+  - 确保 JAR 内存在 `META-INF/plugin.yml`。
+  - 若使用第三方库，请合理选择打包策略（Shade 或在宿主可见的 ClassLoader 下可加载）。
+
+2) 前端‑only 插件（ZIP）
+- 使用任意前端构建工具（Vite、Webpack、Create React App 等）产出静态资源，将其与 `META-INF/plugin.yml` 一起打包为 ZIP。
+- ZIP 目录要求：
+  - `META-INF/plugin.yml` 必须位于根的 `META-INF/` 目录下；
+  - 前端资源目录与 `frontend.basePath` 保持一致（如 `/static`）。
+- plugin.yml 要点：
+  - 省略 `mainClass` 字段；
+  - 设置 `frontend.basePath`（默认为 `/static`，建议显式填写）与 `frontend.entry`（如 `/index.html`）。
+
+安装与加载：
+- 将 `.jar` 或 `.zip` 直接放入宿主应用的 `plugins/` 目录；
+- 宿主启动（或自动加载）时会发现并加载；若此前未被持久化为禁用状态，将自动启用。
 
 ## 8. 安装与调试
 
-1. 将插件 JAR 放入宿主应用的插件目录（通常在 `plugins/`）。
+1. 将插件包（JAR 或 ZIP）放入宿主应用的插件目录（通常在 `plugins/`）。
 2. 启动宿主应用（或在运行中使用平台提供的加载机制）。
 3. 查看控制台日志确认加载、启用是否成功。
 4. 访问平台菜单，检查前端入口、图标与 API 是否可用。
@@ -222,6 +293,21 @@ public class HelloController {
     - Material Icons: `md:` + value
     - SVG: 非 URL/data 的内联内容将加 `svg:` 前缀
 
+- Q: 如何选择 JAR 与 ZIP？
+  - A: 仅前端页面/静态资源的插件建议使用 ZIP；需要后端逻辑（数据库访问、REST 接口、定时任务等）的插件使用 JAR。
+
+- Q: ZIP 插件能否使用后端生命周期（onLoad/onEnable/onDisable/onUnload）？
+  - A: 不能。ZIP 插件没有 ClassLoader/Spring 上下文，仅注册静态资源与菜单。
+
+- Q: 前端资源会被缓存到哪里？如何清理？
+  - A: 启用时会解压到 `data/static-cache/{pluginId}`；禁用时平台会尝试清理该目录。
+
+- Q: 插件启用/禁用状态是否会被记住？
+  - A: 会。平台在 `config/plugins/{pluginId}/plugin-state.properties` 中持久化 `enabled=true/false`，下次启动自动应用。
+
+- Q: `frontend.basePath` 和 `frontend.entry` 有默认值吗？
+  - A: `frontend.basePath` 默认为 `/static`；`frontend.entry` 无默认值，建议显式填写入口文件路径（例如 `/index.html`）。
+
 ## 10. 最小可用示例
 
 plugin.yml：
@@ -241,6 +327,22 @@ frontend:
   basePath: /static
 api:
   prefix: /api/hello
+```
+
+前端‑only（ZIP）最小示例：
+
+```yaml
+id: hello-frontend
+name: Hello Frontend
+version: 1.0.0
+description: 最小前端-only 示例
+author: Demo
+icon:
+  type: emoji
+  value: "👋"
+frontend:
+  entry: /index.html
+  basePath: /static
 ```
 
 Java 主类：

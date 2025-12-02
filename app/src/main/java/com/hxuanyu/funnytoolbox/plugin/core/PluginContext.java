@@ -46,6 +46,15 @@ public class PluginContext {
     private LocalDateTime loadTime;
     private LocalDateTime startTime;
 
+    // 包类型与来源（用于前端-only 插件等场景）
+    public enum PackageType { JAR, ZIP }
+
+    // 插件包类型（JAR 或 ZIP），JAR 类型表示传统后端插件；ZIP 表示仅前端资源的轻量插件
+    private PackageType packageType;
+
+    // 插件包文件的绝对路径（用于静态资源提取等）
+    private String packageFilePath;
+
     @Data
     public static class MappingInfo {
         private Object handler;
