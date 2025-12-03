@@ -19,7 +19,12 @@ import java.nio.charset.StandardCharsets;
  * 简易认证过滤器：
  * - 从 HttpSession 中检查是否已登录；
  * - 仅拦截平台的“管理相关接口”（/api/platform/**），
- *   但放行获取插件列表（GET /api/platform/plugins）以及 /api/auth/** 登录相关接口；
+ *   但放行以下公开接口（用于前台展示）：
+ *     - /api/auth/** 登录相关接口
+ *     - GET /api/platform/plugins            获取插件列表
+ *     - GET /api/platform/plugins/tags       获取所有标签
+ *     - GET /api/platform/plugins/search/by-tag   按单个标签筛选
+ *     - GET /api/platform/plugins/search/by-tags  按多个标签筛选
  * - 其他插件提供的公开接口/资源不受影响。
  */
 @Component
@@ -52,8 +57,12 @@ public class AuthenticationFilter extends OncePerRequestFilter {
 
         // 仅针对平台管理接口做认证
         if (path.startsWith("/api/platform")) {
-            // 放行：获取插件列表（GET /api/platform/plugins）
-            if ("GET".equalsIgnoreCase(method) && "/api/platform/plugins".equals(path)) {
+            // 放行：获取插件列表与标签筛选相关公开接口（GET）
+            if ("GET".equalsIgnoreCase(method)
+                    && ("/api/platform/plugins".equals(path)
+                    || "/api/platform/plugins/tags".equals(path)
+                    || "/api/platform/plugins/search/by-tag".equals(path)
+                    || "/api/platform/plugins/search/by-tags".equals(path))) {
                 filterChain.doFilter(request, response);
                 return;
             }
