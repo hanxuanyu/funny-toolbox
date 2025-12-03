@@ -489,6 +489,8 @@ public class PlatformController {
             @RequestPart(value = "files", required = false) List<MultipartFile> files,
             @Parameter(description = "每个文件的相对路径，与 files 顺序一一对应，例如 js/app.js、index.html")
             @RequestParam(value = "paths", required = false) List<String> paths,
+            @Parameter(description = "逗号分隔的标签列表（可选），例如：tool,video,obs。将写入 plugin.yml 的 tags 字段，用于默认标签")
+            @RequestParam(value = "tags", required = false) String tagsCsv,
             @Parameter(description = "是否在打包完成后直接导入系统")
             @RequestParam(value = "import", defaultValue = "false") boolean importToSystem
     ) {
@@ -522,8 +524,9 @@ public class PlatformController {
             Path staticRoot = workRoot.resolve(normBase);
             Files.createDirectories(staticRoot);
 
-            // 3) 写入 plugin.yml
-            String yaml = buildPluginYaml(meta, basePath, entry);
+            // 3) 写入 plugin.yml（支持通过参数传入的 tags）
+            String normalizedTags = normalizeTagsCsv(tagsCsv);
+            String yaml = buildPluginYaml(meta, basePath, entry, normalizedTags);
             Files.writeString(metaInf.resolve("plugin.yml"), yaml);
 
             // 4) 注入静态资源
@@ -754,7 +757,7 @@ public class PlatformController {
     /**
      * 生成插件描述符 YAML（frontend-only，无 mainClass）。
      */
-    private static String buildPluginYaml(FrontendPluginPackMeta meta, String basePath, String entry) {
+    private static String buildPluginYaml(FrontendPluginPackMeta meta, String basePath, String entry, String tagsCsv) {
         StringBuilder sb = new StringBuilder();
         // 顶层字段
         sb.append("id: ").append(escapeYaml(meta.getId())).append('\n');
@@ -762,6 +765,11 @@ public class PlatformController {
         sb.append("version: ").append(escapeYaml(meta.getVersion())).append('\n');
         if (!isBlank(meta.getDescription())) sb.append("description: ").append(escapeYaml(meta.getDescription())).append('\n');
         if (!isBlank(meta.getAuthor())) sb.append("author: ").append(escapeYaml(meta.getAuthor())).append('\n');
+
+        // 默认标签（CSV 字符串）
+        if (!isBlank(tagsCsv)) {
+            sb.append("tags: ").append(escapeYaml(tagsCsv)).append('\n');
+        }
 
         // icon（对象形式）
         if (meta.getIconMeta() != null) {
@@ -790,6 +798,24 @@ public class PlatformController {
         sb.append("  basePath: ").append(escapeYaml(basePath)).append('\n');
 
         return sb.toString();
+    }
+
+    /**
+     * 归一化 CSV 标签：去空白、去空项、去重（保序），返回用逗号连接的字符串；若结果为空返回 null。
+     */
+    private static String normalizeTagsCsv(String csv) {
+        if (csv == null) return null;
+        String s = csv.trim();
+        if (s.isEmpty()) return null;
+        String[] arr = s.split(",");
+        java.util.LinkedHashSet<String> set = new java.util.LinkedHashSet<>();
+        for (String item : arr) {
+            if (item == null) continue;
+            String t = item.trim();
+            if (!t.isEmpty()) set.add(t);
+        }
+        if (set.isEmpty()) return null;
+        return String.join(",", set);
     }
 
     private static String escapeYaml(String s) {
