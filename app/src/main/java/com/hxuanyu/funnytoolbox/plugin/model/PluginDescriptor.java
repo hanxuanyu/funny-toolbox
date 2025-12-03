@@ -6,6 +6,7 @@ import org.yaml.snakeyaml.Yaml;
 import java.io.InputStream;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * 插件描述符
@@ -29,6 +30,8 @@ public class PluginDescriptor {
 
     private List<String> dependencies;
     private List<String> permissions;
+    // 插件在描述符中声明的标签（用于默认分类，可被管理端覆盖）
+    private List<String> tags;
 
     @Data
     public static class FrontendConfig {
@@ -83,6 +86,29 @@ public class PluginDescriptor {
         // 解析依赖和权限
         descriptor.setDependencies((List<String>) data.get("dependencies"));
         descriptor.setPermissions((List<String>) data.get("permissions"));
+
+        // 解析标签（可选）
+        Object tagsObj = data.get("tags");
+        if (tagsObj instanceof List) {
+            // 兼容旧格式：YAML 列表
+            descriptor.setTags(((List<?>) tagsObj).stream()
+                    .filter(Objects::nonNull)
+                    .map(Object::toString)
+                    .map(String::trim)
+                    .filter(s -> !s.isEmpty())
+                    .toList());
+        } else if (tagsObj instanceof String) {
+            // 新推荐格式：逗号分隔的字符串，例如: tags: a,b,c
+            String csv = ((String) tagsObj).trim();
+            if (!csv.isEmpty()) {
+                List<String> tags = java.util.Arrays.stream(csv.split(","))
+                        .map(String::trim)
+                        .filter(s -> !s.isEmpty())
+                        .distinct()
+                        .toList();
+                descriptor.setTags(tags);
+            }
+        }
 
         return descriptor;
     }

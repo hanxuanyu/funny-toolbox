@@ -81,6 +81,86 @@ public class PlatformController {
     }
 
     /**
+     * 获取所有已存在的标签（去重、排序）。
+     * 用于前端提供可选择的标签列表。
+     */
+    @Operation(summary = "获取所有标签", description = "返回平台当前所有插件的标签集合（去重、按字母排序，大小写不敏感）")
+    @GetMapping("/plugins/tags")
+    public Result<List<String>> listAllTags() {
+        return Result.success(pluginManager.getAllTags());
+    }
+
+    /**
+     * 通过单个标签筛选插件
+     */
+    @Operation(summary = "按标签筛选插件", description = "通过单个标签筛选插件列表")
+    @GetMapping("/plugins/search/by-tag")
+    public Result<List<PluginDTO>> listPluginsByTag(@RequestParam("tag") String tag) {
+        return Result.success(pluginManager.getPluginsByTag(tag));
+    }
+
+    /**
+     * 通过多个标签筛选插件
+     * @param tags 逗号分隔的标签列表，例如 a,b,c
+     * @param matchAll 是否要求全部匹配（true 则为 AND，false 则为 OR）
+     */
+    @Operation(summary = "按多个标签筛选插件", description = "通过多个标签（AND/OR）筛选插件列表")
+    @GetMapping("/plugins/search/by-tags")
+    public Result<List<PluginDTO>> listPluginsByTags(@RequestParam("tags") String tags,
+                                                     @RequestParam(value = "matchAll", required = false, defaultValue = "false") boolean matchAll) {
+        if (tags == null || tags.isBlank()) {
+            return Result.success(List.of());
+        }
+        List<String> list = java.util.Arrays.stream(tags.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .toList();
+        return Result.success(pluginManager.getPluginsByTags(list, matchAll));
+    }
+
+    /**
+     * 获取插件的标签
+     */
+    @Operation(summary = "获取插件标签", description = "返回指定插件的标签列表（实际生效值，管理端优先于描述符）")
+    @GetMapping("/plugins/{pluginId}/tags")
+    public Result<List<String>> getPluginTags(@PathVariable("pluginId") String pluginId) {
+        return Result.success(pluginManager.getPluginTags(pluginId));
+    }
+
+    /**
+     * 覆盖设置插件标签
+     */
+    @Operation(summary = "设置插件标签", description = "覆盖设置插件标签（管理端优先级更高）")
+    @PutMapping("/plugins/{pluginId}/tags")
+    public Result<Boolean> setPluginTags(@PathVariable("pluginId") String pluginId,
+                                         @RequestBody List<String> tags) {
+        pluginManager.setPluginTags(pluginId, tags == null ? List.of() : tags);
+        return Result.success(true);
+    }
+
+    /**
+     * 新增一个标签
+     */
+    @Operation(summary = "新增插件标签", description = "为插件新增一个标签")
+    @PostMapping("/plugins/{pluginId}/tags")
+    public Result<Boolean> addPluginTag(@PathVariable("pluginId") String pluginId,
+                                        @RequestParam("tag") String tag) {
+        pluginManager.addPluginTag(pluginId, tag);
+        return Result.success(true);
+    }
+
+    /**
+     * 移除一个标签
+     */
+    @Operation(summary = "移除插件标签", description = "从插件标签列表中移除一个标签")
+    @DeleteMapping("/plugins/{pluginId}/tags")
+    public Result<Boolean> removePluginTag(@PathVariable("pluginId") String pluginId,
+                                           @RequestParam("tag") String tag) {
+        pluginManager.removePluginTag(pluginId, tag);
+        return Result.success(true);
+    }
+
+    /**
      * 获取当前会话的认证状态（与后台操作一致的访问控制）。
      * 注意：该接口位于 /api/platform/** 下，未登录时会被 AuthenticationFilter 拦截并返回 401。
      */

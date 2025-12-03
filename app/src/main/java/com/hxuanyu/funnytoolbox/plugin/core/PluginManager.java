@@ -181,6 +181,13 @@ public class PluginManager {
             log.info("Plugin {} has no mainClass, treated as frontend-only plugin.", pluginId);
         }
 
+        // 7. 初始化标签到状态文件（若不存在则写入插件内置标签；若已存在，尊重已有值）
+        try {
+            initPersistedTagsIfAbsent(pluginId, descriptor.getTags());
+        } catch (Exception ex) {
+            log.warn("Init persisted tags failed for {}: {}", pluginId, ex.getMessage());
+        }
+
         // 8. 保存上下文
         pluginContexts.put(pluginId, context);
 
@@ -884,6 +891,12 @@ public class PluginManager {
             Path stateFile = getPluginStateFile(pluginId);
             Files.createDirectories(stateFile.getParent());
             Properties props = new Properties();
+            // 读取旧内容，避免覆盖其它属性（如 tags）
+            if (Files.exists(stateFile)) {
+                try (InputStream is = Files.newInputStream(stateFile)) {
+                    props.load(is);
+                } catch (IOException ignore) {}
+            }
             props.setProperty("enabled", Boolean.toString(enabled));
             try (OutputStream os = Files.newOutputStream(stateFile, java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.TRUNCATE_EXISTING)) {
                 props.store(os, "Plugin state for " + pluginId);
@@ -947,6 +960,175 @@ public class PluginManager {
             dto.setApiPrefix(desc.getApi().getPrefix());
         }
 
+        // 设置标签（来自状态文件的最终标签；若无则回退到描述符）
+        try {
+            dto.setTags(getPluginTags(desc.getId()));
+        } catch (Exception ignore) {
+            dto.setTags(desc.getTags());
+        }
+
         return dto;
+    }
+
+    // ===================== 标签支持 =====================
+
+    private void initPersistedTagsIfAbsent(String pluginId, List<String> defaultTags) {
+        Path stateFile = getPluginStateFile(pluginId);
+        try {
+            Files.createDirectories(stateFile.getParent());
+            Properties props = new Properties();
+            if (Files.exists(stateFile)) {
+                try (InputStream is = Files.newInputStream(stateFile)) {
+                    props.load(is);
+                }
+            }
+            if (!props.containsKey("tags")) {
+                if (defaultTags != null && !defaultTags.isEmpty()) {
+                    props.setProperty("tags", joinTags(defaultTags));
+                    try (OutputStream os = Files.newOutputStream(stateFile, java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.TRUNCATE_EXISTING)) {
+                        props.store(os, "Plugin state for " + pluginId);
+                    }
+                } else if (!Files.exists(stateFile)) {
+                    // 确保至少创建一个空的 state 文件
+                    try (OutputStream os = Files.newOutputStream(stateFile, java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.TRUNCATE_EXISTING)) {
+                        props.store(os, "Plugin state for " + pluginId);
+                    }
+                }
+            } else {
+                // 已有 tags，不覆盖
+            }
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private List<String> parseTags(String csv) {
+        if (csv == null || csv.trim().isEmpty()) return Collections.emptyList();
+        return Stream.of(csv.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .distinct()
+                .collect(Collectors.toList());
+    }
+
+    private String joinTags(List<String> tags) {
+        if (tags == null) return "";
+        return tags.stream()
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .distinct()
+                .collect(Collectors.joining(","));
+    }
+
+    public List<String> getPluginTags(String pluginId) {
+        Path stateFile = getPluginStateFile(pluginId);
+        Properties props = new Properties();
+        try {
+            if (Files.exists(stateFile)) {
+                try (InputStream is = Files.newInputStream(stateFile)) {
+                    props.load(is);
+                }
+            }
+        } catch (IOException e) {
+            log.warn("Read tags failed for {}: {}", pluginId, e.getMessage());
+        }
+        String csv = props.getProperty("tags");
+        if (csv == null || csv.isEmpty()) {
+            // 回退到描述符
+            PluginContext ctx = pluginContexts.get(pluginId);
+            if (ctx != null && ctx.getDescriptor() != null) {
+                List<String> tags = ctx.getDescriptor().getTags();
+                return tags != null ? tags : Collections.emptyList();
+            }
+            return Collections.emptyList();
+        }
+        return parseTags(csv);
+    }
+
+    public void setPluginTags(String pluginId, List<String> tags) {
+        Path stateFile = getPluginStateFile(pluginId);
+        try {
+            Files.createDirectories(stateFile.getParent());
+            Properties props = new Properties();
+            if (Files.exists(stateFile)) {
+                try (InputStream is = Files.newInputStream(stateFile)) {
+                    props.load(is);
+                }
+            }
+            props.setProperty("tags", joinTags(tags));
+            try (OutputStream os = Files.newOutputStream(stateFile, java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.TRUNCATE_EXISTING)) {
+                props.store(os, "Plugin state for " + pluginId);
+            }
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    public void addPluginTag(String pluginId, String tag) {
+        List<String> tags = new ArrayList<>(getPluginTags(pluginId));
+        if (tag != null) {
+            String t = tag.trim();
+            if (!t.isEmpty() && !tags.contains(t)) {
+                tags.add(t);
+            }
+        }
+        setPluginTags(pluginId, tags);
+    }
+
+    public void removePluginTag(String pluginId, String tag) {
+        List<String> tags = new ArrayList<>(getPluginTags(pluginId));
+        if (tag != null) {
+            tags.removeIf(s -> s.equalsIgnoreCase(tag.trim()));
+        }
+        setPluginTags(pluginId, tags);
+    }
+
+    public List<PluginDTO> getPluginsByTag(String tag) {
+        if (tag == null || tag.trim().isEmpty()) return Collections.emptyList();
+        String target = tag.trim();
+        return pluginContexts.values().stream()
+                .map(this::toDTO)
+                .filter(dto -> dto.getTags() != null && dto.getTags().stream().anyMatch(t -> t.equalsIgnoreCase(target)))
+                .collect(Collectors.toList());
+    }
+
+    public List<PluginDTO> getPluginsByTags(List<String> tags, boolean matchAll) {
+        if (tags == null || tags.isEmpty()) return Collections.emptyList();
+        List<String> normalized = tags.stream().filter(Objects::nonNull).map(String::trim).filter(s -> !s.isEmpty()).toList();
+        if (normalized.isEmpty()) return Collections.emptyList();
+        return pluginContexts.values().stream()
+                .map(this::toDTO)
+                .filter(dto -> {
+                    List<String> ts = dto.getTags();
+                    if (ts == null || ts.isEmpty()) return false;
+                    if (matchAll) {
+                        return normalized.stream().allMatch(n -> ts.stream().anyMatch(t -> t.equalsIgnoreCase(n)));
+                    } else {
+                        return normalized.stream().anyMatch(n -> ts.stream().anyMatch(t -> t.equalsIgnoreCase(n)));
+                    }
+                })
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * 获取当前平台所有插件的“已存在标签”集合（去重、按字母顺序，大小写不敏感）。
+     * 用于前端提供可选择的标签列表。
+     */
+    public List<String> getAllTags() {
+        // 使用不区分大小写的排序与去重
+        Set<String> set = new java.util.TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+        for (PluginContext ctx : pluginContexts.values()) {
+            String id = ctx.getPluginId();
+            List<String> tags = getPluginTags(id);
+            if (tags != null) {
+                tags.stream()
+                        .filter(Objects::nonNull)
+                        .map(String::trim)
+                        .filter(s -> !s.isEmpty())
+                        .forEach(set::add);
+            }
+        }
+        return new ArrayList<>(set);
     }
 }

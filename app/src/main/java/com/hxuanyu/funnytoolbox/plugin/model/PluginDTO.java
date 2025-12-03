@@ -3,6 +3,7 @@ package com.hxuanyu.funnytoolbox.plugin.model;
 import lombok.Data;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * 插件 DTO
@@ -21,4 +22,5 @@ public class PluginDTO {
     private LocalDateTime startTime;
     private String frontendEntry;
     private String apiPrefix;
+    private List<String> tags;
 }
