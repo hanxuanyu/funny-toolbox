@@ -1,0 +1,67 @@
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "Funny Toolbox API",
+    "description": "Funny Toolbox 平台后端接口文档，包含插件管理、菜单等模块",
+    "contact": {
+      "name": "hxuanyu",
+      "url": "https://github.com/hxuanyu",
+      "email": ""
+    },
+    "license": {
+      "name": "Apache 2.0",
+      "url": "http://www.apache.org/licenses/LICENSE-2.0.html"
+    },
+    "version": "v1.0.0"
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "默认服务"
+    }
+  ],
+  "paths": {
+    "/api/platform/plugins/tags": {
+      "get": {
+        "tags": [
+          "平台管理"
+        ],
+        "summary": "获取所有标签",
+        "description": "返回平台当前所有插件的标签集合（去重、按字母排序，大小写不敏感）",
+        "operationId": "listAllTags",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultListString"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "ResultListString": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "message": {
+          "type": "string"
+        },
+        "data": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

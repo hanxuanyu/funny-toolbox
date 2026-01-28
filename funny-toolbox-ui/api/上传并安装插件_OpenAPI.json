@@ -1,0 +1,105 @@
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "Funny Toolbox API",
+    "description": "Funny Toolbox 平台后端接口文档，包含插件管理、菜单等模块",
+    "contact": {
+      "name": "hxuanyu",
+      "url": "https://github.com/hxuanyu",
+      "email": ""
+    },
+    "license": {
+      "name": "Apache 2.0",
+      "url": "http://www.apache.org/licenses/LICENSE-2.0.html"
+    },
+    "version": "v1.0.0"
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "默认服务"
+    }
+  ],
+  "paths": {
+    "/api/platform/plugins/install": {
+      "post": {
+        "tags": [
+          "平台管理"
+        ],
+        "summary": "上传并安装插件",
+        "description": "上传插件JAR并保存到平台插件目录，随后加载并自动启用该插件。文件名建议使用 plugin-<插件ID>-<版本>.jar 格式",
+        "operationId": "installPlugin",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "required": [
+                  "file"
+                ],
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "description": "插件JAR文件",
+                    "format": "binary",
+                    "name": "file",
+                    "in": "query"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "安装成功，返回插件ID",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultString"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求不合法",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultString"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "服务端异常",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultString"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "ResultString": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "message": {
+          "type": "string"
+        },
+        "data": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

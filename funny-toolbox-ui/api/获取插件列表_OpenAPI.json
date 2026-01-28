@@ -1,0 +1,95 @@
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "Funny Toolbox API",
+    "description": "Funny Toolbox 平台后端接口文档，包含插件管理、菜单等模块",
+    "contact": {
+      "name": "hxuanyu",
+      "url": "https://github.com/hxuanyu",
+      "email": ""
+    },
+    "license": {
+      "name": "Apache 2.0",
+      "url": "http://www.apache.org/licenses/LICENSE-2.0.html"
+    },
+    "version": "v1.0.0"
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "默认服务"
+    }
+  ],
+  "paths": {
+    "/api/platform/plugins": {
+      "get": {
+        "tags": [
+          "平台管理"
+        ],
+        "summary": "获取插件列表",
+        "description": "返回当前平台已加载的所有插件的基础信息",
+        "operationId": "listPlugins",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PluginDTO"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "PluginDTO": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "author": {
+          "type": "string"
+        },
+        "icon": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "loadTime": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "startTime": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "frontendEntry": {
+          "type": "string"
+        },
+        "apiPrefix": {
+          "type": "string"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,155 @@
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "Funny Toolbox API",
+    "description": "Funny Toolbox 平台后端接口文档，包含插件管理、菜单等模块",
+    "contact": {
+      "name": "hxuanyu",
+      "url": "https://github.com/hxuanyu",
+      "email": ""
+    },
+    "license": {
+      "name": "Apache 2.0",
+      "url": "http://www.apache.org/licenses/LICENSE-2.0.html"
+    },
+    "version": "v1.0.0"
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "默认服务"
+    }
+  ],
+  "paths": {
+    "/api/platform/plugins/pack/frontend": {
+      "post": {
+        "tags": [
+          "平台管理"
+        ],
+        "summary": "打包前端插件（ZIP）",
+        "description": "上传前端构建产物和元数据，后端生成符合平台规范的 ZIP 插件包，可选择立刻导入",
+        "operationId": "packFrontendPlugin",
+        "parameters": [
+          {
+            "name": "paths",
+            "in": "query",
+            "description": "每个文件的相对路径，与 files 顺序一一对应，例如 js/app.js、index.html",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "tags",
+            "in": "query",
+            "description": "逗号分隔的标签列表（可选），例如：tool,video,obs。将写入 plugin.yml 的 tags 字段，用于默认标签",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "import",
+            "in": "query",
+            "description": "是否在打包完成后直接导入系统",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "meta": {
+                    "type": "string",
+                    "description": "插件元数据 JSON（作为 multipart 的 meta 字段，可为 application/json 或纯文本 JSON）",
+                    "name": "meta",
+                    "in": "query"
+                  },
+                  "zip": {
+                    "type": "string",
+                    "description": "dist.zip（可选，和 files 二选一）",
+                    "format": "binary",
+                    "name": "zip",
+                    "in": "query"
+                  },
+                  "files": {
+                    "type": "array",
+                    "description": "多个静态资源文件（可选，和 zip 二选一）",
+                    "items": {
+                      "type": "string",
+                      "format": "binary"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultFrontendPluginPackResult"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "ResultFrontendPluginPackResult": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "message": {
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/components/schemas/FrontendPluginPackResult"
+        }
+      }
+    },
+    "FrontendPluginPackResult": {
+      "type": "object",
+      "properties": {
+        "pluginId": {
+          "type": "string",
+          "refType": null
+        },
+        "fileName": {
+          "type": "string",
+          "refType": null
+        },
+        "fileSize": {
+          "type": "integer",
+          "format": "int64",
+          "refType": null
+        },
+        "downloadUrl": {
+          "type": "string",
+          "refType": null
+        },
+        "imported": {
+          "type": "boolean",
+          "refType": null
+        }
+      }
+    }
+  }
+}

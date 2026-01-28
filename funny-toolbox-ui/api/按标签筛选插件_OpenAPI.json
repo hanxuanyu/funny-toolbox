@@ -1,0 +1,135 @@
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "Funny Toolbox API",
+    "description": "Funny Toolbox 平台后端接口文档，包含插件管理、菜单等模块",
+    "contact": {
+      "name": "hxuanyu",
+      "url": "https://github.com/hxuanyu",
+      "email": ""
+    },
+    "license": {
+      "name": "Apache 2.0",
+      "url": "http://www.apache.org/licenses/LICENSE-2.0.html"
+    },
+    "version": "v1.0.0"
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "默认服务"
+    }
+  ],
+  "paths": {
+    "/api/platform/plugins/search/by-tag": {
+      "get": {
+        "tags": [
+          "平台管理"
+        ],
+        "summary": "按标签筛选插件",
+        "description": "通过单个标签筛选插件列表",
+        "operationId": "listPluginsByTag",
+        "parameters": [
+          {
+            "name": "tag",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultListPluginDTO"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "ResultListPluginDTO": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "message": {
+          "type": "string"
+        },
+        "data": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/PluginDTO"
+          }
+        }
+      }
+    },
+    "PluginDTO": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "refType": null
+        },
+        "name": {
+          "type": "string",
+          "refType": null
+        },
+        "version": {
+          "type": "string",
+          "refType": null
+        },
+        "description": {
+          "type": "string",
+          "refType": null
+        },
+        "author": {
+          "type": "string",
+          "refType": null
+        },
+        "icon": {
+          "type": "string",
+          "refType": null
+        },
+        "status": {
+          "type": "string",
+          "refType": null
+        },
+        "loadTime": {
+          "type": "string",
+          "format": "date-time",
+          "refType": null
+        },
+        "startTime": {
+          "type": "string",
+          "format": "date-time",
+          "refType": null
+        },
+        "frontendEntry": {
+          "type": "string",
+          "refType": null
+        },
+        "apiPrefix": {
+          "type": "string",
+          "refType": null
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "refType": "string"
+        }
+      }
+    }
+  }
+}

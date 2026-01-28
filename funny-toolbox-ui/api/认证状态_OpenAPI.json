@@ -1,0 +1,86 @@
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "Funny Toolbox API",
+    "description": "Funny Toolbox 平台后端接口文档，包含插件管理、菜单等模块",
+    "contact": {
+      "name": "hxuanyu",
+      "url": "https://github.com/hxuanyu",
+      "email": ""
+    },
+    "license": {
+      "name": "Apache 2.0",
+      "url": "http://www.apache.org/licenses/LICENSE-2.0.html"
+    },
+    "version": "v1.0.0"
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "默认服务"
+    }
+  ],
+  "paths": {
+    "/api/platform/auth/status": {
+      "get": {
+        "tags": [
+          "平台管理"
+        ],
+        "summary": "认证状态",
+        "description": "返回当前会话是否已认证及基本信息；未登录则在过滤器阶段返回 401",
+        "operationId": "authStatus",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultAuthStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "ResultAuthStatus": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "message": {
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/components/schemas/AuthStatus"
+        }
+      }
+    },
+    "AuthStatus": {
+      "type": "object",
+      "properties": {
+        "authenticated": {
+          "type": "boolean",
+          "refType": null
+        },
+        "user": {
+          "type": "string",
+          "refType": null
+        },
+        "sessionId": {
+          "type": "string",
+          "refType": null
+        },
+        "serverTime": {
+          "type": "integer",
+          "format": "int64",
+          "refType": null
+        }
+      }
+    }
+  }
+}

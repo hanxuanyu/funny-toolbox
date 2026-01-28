@@ -1,0 +1,100 @@
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "Funny Toolbox API",
+    "description": "Funny Toolbox 平台后端接口文档，包含插件管理、菜单等模块",
+    "contact": {
+      "name": "hxuanyu",
+      "url": "https://github.com/hxuanyu",
+      "email": ""
+    },
+    "license": {
+      "name": "Apache 2.0",
+      "url": "http://www.apache.org/licenses/LICENSE-2.0.html"
+    },
+    "version": "v1.0.0"
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "默认服务"
+    }
+  ],
+  "paths": {
+    "/api/platform/plugins/download": {
+      "get": {
+        "tags": [
+          "平台管理"
+        ],
+        "summary": "下载插件包",
+        "description": "从平台插件目录下载已存在的 JAR 或 ZIP 插件包",
+        "operationId": "downloadPluginPackage",
+        "parameters": [
+          {
+            "name": "fileName",
+            "in": "query",
+            "description": "插件包文件名（包含扩展名 .jar 或 .zip），位于 platform.plugin.dir 目录下",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "pluginId",
+            "in": "query",
+            "description": "插件ID，与 ext 配合或自动探测 .jar/.zip",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ext",
+            "in": "query",
+            "description": "首选扩展名：jar 或 zip，可选",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功返回文件流",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "string",
+                  "format": "byte"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "参数不合法",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "string",
+                  "format": "byte"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "未找到插件包",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "string",
+                  "format": "byte"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {}
+}

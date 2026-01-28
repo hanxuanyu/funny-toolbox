@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <rect width="32" height="32" rx="6" fill="#10b981"/>
+  <g transform="translate(16, 16)">
+    <!-- ASCII 文字 A -->
+    <text x="0" y="6" font-size="18" font-weight="bold" font-family="monospace" text-anchor="middle" fill="white">A</text>
+  </g>
+  <!-- 装饰点 -->
+  <circle cx="6" cy="6" r="1.5" fill="white" opacity="0.7"/>
+  <circle cx="16" cy="6" r="1.5" fill="white" opacity="0.7"/>
+  <circle cx="26" cy="6" r="1.5" fill="white" opacity="0.7"/>
+  <circle cx="6" cy="26" r="1.5" fill="white" opacity="0.7"/>
+  <circle cx="26" cy="26" r="1.5" fill="white" opacity="0.7"/>
+</svg>
